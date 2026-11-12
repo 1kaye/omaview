@@ -113,12 +113,15 @@ src/mpris.{h,cpp}         the MPRIS adaptor
 src/inhibit.{h,cpp}       the Wayland idle inhibitor, through wayland-scanner's code
 src/filepicker.h  src/portalfilepicker.{h,cpp}   from Omacut
 src/theme.{h,cpp}  src/translator.{h,cpp}        the shared templates
-src/*.qml  src/i18n/<code>.json  src/skill.md  src/resources.qrc
-tests/showtime_tests.cpp  tests/ui_tests.cpp  tests/test_cli.py  tests/fixtures/
+src/texts.h               translated text for code outside a QObject
+src/Main.qml              the window: picture, display, keys
+src/ControlsOverlay.qml  src/ControlButton.qml  src/Timeline.qml  src/Icon.qml  src/Format.js
+src/i18n/<code>.json  src/skill.md  src/resources.qrc
+tests/showtime_tests.cpp  tests/ui_tests.cpp  tests/test_cli.py
 share/showtime.desktop  share/showtime.svg
 ```
 
-The backend owns the `QMediaPlayer` and creates it with the first file, so starting Showtime with nothing to play never starts the FFmpeg backend at all. The window's `VideoOutput` sits in a `Loader` that turns on at the same moment. The player draws into a sink of the backend's, which forwards each frame to the `VideoOutput` and keeps the subtitle text for the window to draw itself, so embedded and sidecar subtitles share one style and the frame on screen is always at hand for Copy frame. Owning the player in C++ is what lets MPRIS, resume, track choice and the tests drive the same object. Test fixtures are a few seconds of generated video and audio (`ffmpeg -f lavfi -i testsrc2`, `sine`), with chapters and a subtitle track, made by the tests rather than committed.
+The backend owns the `QMediaPlayer` and creates it with the first file, so starting Showtime with nothing to play never starts the FFmpeg backend at all. The window's `VideoOutput` sits in a `Loader` that turns on at the same moment. The player draws into a sink of the backend's, sharing the window's GPU context, which hands each frame to the `VideoOutput` from the decoder's thread and keeps the subtitle text for the window to draw itself, so embedded and sidecar subtitles share one style and the frame on screen is always at hand for Copy frame. Owning the player in C++ is what lets MPRIS, resume, track choice and the tests drive the same object. Nothing slow happens on the GUI thread: the folder listing, ffprobe, subtitle extraction, previews and frame conversion run in workers that a new file cancels, and remembered positions and choices are written in order on a thread of their own. Test fixtures are a few seconds of generated video and audio (`ffmpeg -f lavfi -i testsrc2`, `sine`), with chapters and a subtitle track, made by the tests rather than committed.
 
 ## Agents can drive it
 

@@ -70,6 +70,25 @@ QByteArray ffmpeg(const QStringList &arguments, int timeoutMs, QString *error, b
 
 }  // namespace
 
+namespace {
+
+// Read rather than set and restored, which would race other threads making
+// files; Linux reports it in /proc since 4.7.
+mode_t processUmask() {
+    QFile status("/proc/self/status");
+    if (status.open(QIODevice::ReadOnly))
+        for (const QByteArray &line : status.readAll().split('\n'))
+            if (line.startsWith("Umask:")) {
+                bool ok = false;
+                const uint mask = line.mid(6).trimmed().toUInt(&ok, 8);
+                if (ok)
+                    return mode_t(mask);
+            }
+    return 022;
+}
+
+}  // namespace
+
 QImage extract(const QString &path, double at, QString *error) {
     // -ss before -i seeks the input, which ffmpeg makes exact when decoding.
     const QByteArray png = ffmpeg({"-ss", seconds(at), "-i", path, "-map", "0:V:0", "-frames:v", "1",
@@ -102,8 +121,7 @@ bool savePng(const QImage &image, const QString &path, QString *error) {
     if (QFileInfo::exists(path))
         permissions = QFile::permissions(path);
     else {
-        const mode_t mask = ::umask(0);
-        ::umask(mask);
+        const mode_t mask = processUmask();
         permissions = QFileDevice::Permissions();
         const mode_t mode = 0666 & ~mask;
         if (mode & 0400) permissions |= QFileDevice::ReadOwner | QFileDevice::ReadUser;
@@ -215,8 +233,13 @@ void Previews::start(const QString &path, double duration, QSize videoSize) {
         QPainter painter(&atlas);
         const QString scale = QString("scale=%1:%2:force_original_aspect_ratio=decrease")
                                   .arg(layout.tileSize.width()).arg(layout.tileSize.height());
+        int made = 0;
         for (int i = 0; i < layout.count; ++i) {
             if (*cancelled)
+                return;
+            // A file ffmpeg can't read at all fails on every tile; stop early
+            // rather than spawning the rest.
+            if (i == 3 && made == 0)
                 return;
             // A fast seek to the keyframe before each time: good enough for a
             // thumbnail, and far cheaper than decoding the film.
@@ -227,6 +250,7 @@ void Previews::start(const QString &path, double duration, QSize videoSize) {
             const QImage tile = QImage::fromData(bytes, "BMP");
             if (tile.isNull())
                 continue;
+            ++made;
             const QPoint cell((i % layout.columns) * layout.tileSize.width(),
                               (i / layout.columns) * layout.tileSize.height());
             painter.drawImage(cell + QPoint((layout.tileSize.width() - tile.width()) / 2,
@@ -234,7 +258,8 @@ void Previews::start(const QString &path, double duration, QSize videoSize) {
                               tile);
         }
         painter.end();
-        if (*cancelled)
+        // Never cache a blank atlas: the next open tries again.
+        if (*cancelled || made == 0)
             return;
         QDir().mkpath(previewCacheDirectory());
         QSaveFile out(cachePath);

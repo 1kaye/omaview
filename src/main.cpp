@@ -9,8 +9,6 @@
 #include <QQuickWindow>
 #include <QUrl>
 #include <cstdio>
-#include <memory>
-#include <utility>
 
 #include "backend.h"
 #include "cli.h"
@@ -74,6 +72,12 @@ int main(int argc, char *argv[]) {
 
     auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
     idle.setWindow(window);
+    // The player's frames share the window's GPU context, set on the render
+    // thread as the scene graph starts and stops.
+    QObject::connect(window, &QQuickWindow::sceneGraphInitialized, window,
+                     [&backend, window] { backend.setRhi(window->rhi()); }, Qt::DirectConnection);
+    QObject::connect(window, &QQuickWindow::sceneGraphInvalidated, window,
+                     [&backend] { backend.setRhi(nullptr); }, Qt::DirectConnection);
     QObject::connect(&backend, &Backend::raiseRequested, window, [window] {
         window->show();
         window->raise();
@@ -87,14 +91,9 @@ int main(int argc, char *argv[]) {
     QStringList files = app.arguments().mid(1);
     if (!files.isEmpty() && files.first() == "open")
         files.removeFirst();
-    if (!files.isEmpty()) {
-        auto opened = std::make_shared<bool>(false);
-        QObject::connect(window, &QQuickWindow::frameSwapped, &backend, [&backend, files, opened] {
-            if (std::exchange(*opened, true))
-                return;
-            QMetaObject::invokeMethod(&backend, [&backend, files] { backend.open(files); }, Qt::QueuedConnection);
-        }, Qt::QueuedConnection);
-    }
+    if (!files.isEmpty())
+        QObject::connect(window, &QQuickWindow::frameSwapped, &backend, [&backend, files] { backend.open(files); },
+                         Qt::ConnectionType(Qt::QueuedConnection | Qt::SingleShotConnection));
 
     return app.exec();
 }

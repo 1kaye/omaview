@@ -18,5 +18,7 @@ public:
 signals:
     void openSelected(const QList<QUrl> &urls);
     void saveSelected(const QUrl &url);
+    // The dialog was dismissed without a choice.
+    void cancelled();
     void failed(const QString &message);
 };

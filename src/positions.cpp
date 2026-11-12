@@ -104,11 +104,16 @@ QJsonObject Positions::preferences() const {
 }
 
 void Positions::setPreference(const QString &name, const QJsonValue &value) {
-    if (preferences().value(name) == value)
+    setPreferences({{name, value}});
+}
+
+void Positions::setPreferences(const QJsonObject &changed) {
+    if (changed.isEmpty())
         return;
     change([&](QJsonObject &root) {
         QJsonObject preferences = root.value("preferences").toObject();
-        preferences.insert(name, value);
+        for (auto it = changed.begin(); it != changed.end(); ++it)
+            preferences.insert(it.key(), it.value());
         root.insert("preferences", preferences);
     });
 }

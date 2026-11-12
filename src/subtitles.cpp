@@ -3,6 +3,7 @@
 #include <QCollator>
 #include <QCoreApplication>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFileInfo>
 #include <QProcess>
 #include <QRegularExpression>
@@ -90,10 +91,13 @@ QList<Cue> parseWebVtt(const QString &text) {
             cues << cue;
     }
     std::stable_sort(cues.begin(), cues.end(), [](const Cue &a, const Cue &b) { return a.start < b.start; });
+    qint64 reach = 0;
+    for (Cue &cue : cues)
+        cue.reach = reach = std::max(reach, cue.end);
     return cues;
 }
 
-QList<Cue> load(const QString &path, int stream, QString *error) {
+QList<Cue> load(const QString &path, int stream, QString *error, const std::atomic_bool *cancelled) {
     const QString ffmpeg = probe::toolPath("ffmpeg");
     if (ffmpeg.isEmpty()) {
         if (error)
@@ -105,11 +109,21 @@ QList<Cue> load(const QString &path, int stream, QString *error) {
     // Reading a track out of a film means reading the film, so it gets time.
     process.start(ffmpeg, {"-nostdin", "-v", "error", "-i", path, "-map", QString("0:s:%1").arg(stream),
                            "-f", "webvtt", "-"});
-    if (!process.waitForFinished(120000) || process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0) {
-        process.kill();
+    // In slices, so a track that is no longer wanted stops its ffmpeg.
+    QElapsedTimer clock;
+    clock.start();
+    bool stopped = false;
+    while (!process.waitForFinished(100) && process.state() != QProcess::NotRunning) {
+        if ((cancelled && *cancelled) || clock.elapsed() > 120000) {
+            process.kill();
+            process.waitForFinished(1000);
+            stopped = true;
+            break;
+        }
+    }
+    if (stopped || process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0) {
         if (error)
-            *error = Texts::tr("Could not read the subtitles in %1.")
-                         .arg(QFileInfo(path).fileName());
+            *error = Texts::tr("Could not read the subtitles in %1.").arg(QFileInfo(path).fileName());
         return {};
     }
     return parseWebVtt(QString::fromUtf8(process.readAllStandardOutput()));
@@ -117,13 +131,14 @@ QList<Cue> load(const QString &path, int stream, QString *error) {
 
 QString at(const QList<Cue> &cues, qint64 ms) {
     // The first cue starting after ms; everything showing starts before it.
+    // Walking back, a cue whose reach has passed means no earlier one can
+    // still be showing, however long ago a long line began.
     auto after = std::upper_bound(cues.begin(), cues.end(), ms, [](qint64 t, const Cue &c) { return t < c.start; });
     QStringList showing;
-    // Cues are short, so looking back a handful covers every overlap that
-    // matters without scanning from the start.
-    int looked = 0;
-    for (auto it = after; it != cues.begin() && looked < 16; ++looked) {
+    for (auto it = after; it != cues.begin();) {
         --it;
+        if (it->reach <= ms)
+            break;
         if (it->end > ms)
             showing.prepend(it->text);
     }

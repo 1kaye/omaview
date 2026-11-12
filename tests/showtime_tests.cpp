@@ -273,6 +273,15 @@ private slots:
         QCOMPARE(subtitles::at(cues, 3700), QString("Top\nOverlap"));
         QCOMPARE(subtitles::at(cues, 4500), QString("Overlap"));
         QCOMPARE(subtitles::at(cues, 9000), QString());
+
+        // A long line stays while many short ones come and go beneath it.
+        QString vtt = "WEBVTT\n\n00:00.000 --> 01:00.000\nNarrator\n\n";
+        for (int i = 0; i < 20; ++i)
+            vtt += QString("00:%1.000 --> 00:%1.500\nShort %2\n\n").arg(i + 10, 2, 10, QChar('0')).arg(i);
+        const auto many = subtitles::parseWebVtt(vtt);
+        QCOMPARE(many.size(), 21);
+        QCOMPARE(subtitles::at(many, 45000), QString("Narrator"));
+        QCOMPARE(subtitles::at(many, 12200), QString("Narrator\nShort 2"));
     }
 
     void sidecarsAreFoundBesideTheVideo() {
@@ -429,6 +438,7 @@ private slots:
         // Turned off, and remembered for the next file.
         backend.cycleSubtitles();
         QCOMPARE(backend.subtitleLabel(), QString());
+        backend.flush();
         QCOMPARE(Positions(options.positionsPath).preferences().value("subtitleLanguage").toString(), QString("off"));
         backend.open({m_clip});
         QTRY_VERIFY_WITH_TIMEOUT(backend.subtitleChoices() == 2, 10000);
@@ -464,6 +474,9 @@ private slots:
             QTRY_VERIFY_WITH_TIMEOUT(backend.seekable() && backend.duration() > 0, 10000);
             backend.pause();
             backend.seek(120000);
+            // The window's closing and the application's quitting both close;
+            // the second, after the player has stopped, changes nothing.
+            backend.close();
             backend.close();
         }
         QCOMPARE(Positions(options.positionsPath).lookup(film), qint64(120000));

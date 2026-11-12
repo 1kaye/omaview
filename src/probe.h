@@ -3,6 +3,7 @@
 #include <QJsonObject>
 #include <QList>
 #include <QString>
+#include <atomic>
 
 // What ffprobe says about a file, as plain values: what Qt Multimedia doesn't
 // expose (chapters, subtitle codecs) and what the info card and the command
@@ -56,7 +57,8 @@ struct Info {
 
 // Runs ffprobe synchronously, so call it off the GUI thread. A timeout keeps a
 // file on a stalled network mount from holding a worker forever.
-Info run(const QString &path, int timeoutMs = 15000);
+// It stops early, with an error, once *cancelled is set.
+Info run(const QString &path, int timeoutMs = 15000, const std::atomic_bool *cancelled = nullptr);
 // Parses ffprobe's -print_format json output; separate so tests can feed it.
 Info parse(const QByteArray &json, const QString &path);
 

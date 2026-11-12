@@ -115,6 +115,10 @@ ApplicationWindow {
     Connections {
         target: backend
         function onVideoSizeChanged() { win.sizeToVideo() }
+        function onPictureCleared() {
+            if (videoLoader.item)
+                videoLoader.item.clearOutput()
+        }
         function onNotice(text) { win.say(text, "") }
         function onResumedAtChanged() {
             if (backend.resumedAt >= 0)
@@ -227,6 +231,9 @@ ApplicationWindow {
                 fillMode: VideoOutput.PreserveAspectFit
                 endOfStreamPolicy: VideoOutput.KeepLastFrame
                 Component.onCompleted: backend.setVideoSink(videoSink)
+                // Detached as destruction begins, before the sink is torn
+                // down, so the decoder's thread never hands it a frame after.
+                Component.onDestruction: backend.setVideoSink(null)
             }
         }
         readonly property rect picture: videoLoader.item && backend.hasVideo
@@ -477,8 +484,10 @@ ApplicationWindow {
                 }
                 Text {
                     anchors.verticalCenter: parent.verticalCenter
-                    text: backend.duration > 0 ? Format.clock(backend.position) + " / " + Format.clock(backend.duration)
-                                               : (backend.seekable ? Format.clock(backend.position) : qsTr("Live"))
+                    // Formatted only while it shows, not on every position update.
+                    text: !cornerOsd.visible ? ""
+                          : backend.duration > 0 ? Format.clock(backend.position) + " / " + Format.clock(backend.duration)
+                          : (backend.seekable ? Format.clock(backend.position) : qsTr("Live"))
                     color: theme.foreground
                     font.family: "monospace"
                     font.pixelSize: 13
@@ -540,16 +549,21 @@ ApplicationWindow {
         }
         Timer { id: centerTimer; interval: 2000; onTriggered: centerOsd.shown = false }
 
-        ControlsOverlay {
+        // Made only while it shows, so its clock and timeline cost nothing
+        // during bare playback.
+        Loader {
             id: controls
             objectName: "overlay"
             anchors.fill: parent
-            visible: opacity > 0
-            opacity: win.overlayShown && backend.hasMedia ? 1 : 0
-            Behavior on opacity { NumberAnimation { duration: 150 } }
-            fullscreen: win.fullscreen
-            keys: win.keys
-            onToggleFullscreen: win.toggleFullscreen()
+            active: win.overlayShown && backend.hasMedia
+            sourceComponent: ControlsOverlay {
+                fullscreen: win.fullscreen
+                keys: win.keys
+                onToggleFullscreen: win.toggleFullscreen()
+                opacity: 0
+                Component.onCompleted: opacity = 1
+                Behavior on opacity { NumberAnimation { duration: 150 } }
+            }
         }
     }
 

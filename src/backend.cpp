@@ -92,18 +92,26 @@ Backend::Backend(const Options &options, QObject *parent)
         m_picker = m_ownPicker.get();
     }
     connect(m_picker, &FilePicker::openSelected, this, &Backend::openUrls);
-    connect(m_picker, &FilePicker::failed, this, &Backend::notice);
+    // A frame held for a dialog that went away without saving is let go.
+    connect(m_picker, &FilePicker::failed, this, [this](const QString &message) {
+        m_pendingFrame = QVideoFrame();
+        emit notice(message);
+    });
+    connect(m_picker, &FilePicker::cancelled, this, [this] { m_pendingFrame = QVideoFrame(); });
     connect(m_picker, &FilePicker::saveSelected, this, [this](const QUrl &url) {
-        const QImage image = m_pendingFrame;
-        m_pendingFrame = QImage();
-        if (image.isNull())
+        QVideoFrame frame = m_pendingFrame;
+        m_pendingFrame = QVideoFrame();
+        if (!frame.isValid())
             return;
         const QString path = url.toLocalFile();
         QPointer<Backend> self(this);
-        (void)QtConcurrent::run([self, image, path] {
+        (void)QtConcurrent::run([self, frame, path]() mutable {
             QEventLoopLocker keepRunning;
-            QString error;
-            const bool saved = frames::savePng(image, path, &error);
+            // Converted here, not on the GUI thread: a 4K frame read back from
+            // the GPU would stall the picture.
+            const QImage image = frame.toImage();
+            QString error = image.isNull() ? tr("Could not save this frame.") : QString();
+            const bool saved = !image.isNull() && frames::savePng(image, path, &error);
             QMetaObject::invokeMethod(qApp, [self, saved, path, error] {
                 if (!self)
                     return;
@@ -113,9 +121,16 @@ Backend::Backend(const Options &options, QObject *parent)
         });
     });
 
-    const QJsonObject preferences = m_positions.preferences();
-    m_volume = std::clamp(preferences.value("volume").toDouble(1.0), 0.0, 1.0);
-    m_muted = preferences.value("muted").toBool(false);
+    // Preferences are read once and kept here; changes are written a moment
+    // later on a thread of their own, in order, so a drag of the volume or
+    // another window holding the file's lock never stalls the picture.
+    m_writer.setMaxThreadCount(1);
+    m_preferences = m_positions.preferences();
+    m_volume = std::clamp(m_preferences.value("volume").toDouble(1.0), 0.0, 1.0);
+    m_muted = m_preferences.value("muted").toBool(false);
+    m_preferenceTimer.setSingleShot(true);
+    m_preferenceTimer.setInterval(500);
+    connect(&m_preferenceTimer, &QTimer::timeout, this, &Backend::writePreferences);
 
     m_previewTimer.setSingleShot(true);
     m_previewTimer.setInterval(m_options.previewDelayMs);
@@ -138,6 +153,9 @@ Backend::Backend(const Options &options, QObject *parent)
 
 Backend::~Backend() {
     m_previews.cancel();
+    if (m_cancel)
+        *m_cancel = true;
+    flush();
     if (m_player) {
         // No frame may reach a backend that is going: detach the sink before
         // the decoder's thread can call into it again.
@@ -217,8 +235,9 @@ void Backend::ensurePlayer() {
     m_player->setVideoSink(m_sink);
     // Frames are handed on from the decoder's thread, as Qt's own player
     // hands them to a VideoOutput, so a busy GUI thread never makes the
-    // picture stutter. The sink shares the window's GPU context, so a frame
-    // decoded on the GPU stays there.
+    // picture stutter. The sink shares the window's GPU context (setRhi), so
+    // a frame decoded on the GPU stays there.
+    m_sink->setRhi(m_rhi.load());
     connect(
         m_sink, &QVideoSink::videoFrameChanged, this,
         [this](const QVideoFrame &frame) {
@@ -238,11 +257,8 @@ void Backend::ensurePlayer() {
             // read the frame on screen.
             {
                 QMutexLocker locker(&m_outputLock);
-                if (m_output) {
-                    if (m_sink->rhi() != m_output->rhi())
-                        m_sink->setRhi(m_output->rhi());
+                if (m_output)
                     m_output->setVideoFrame(frame);
-                }
             }
             if (size.isValid())
                 QMetaObject::invokeMethod(this, [this, size] {
@@ -293,22 +309,21 @@ void Backend::ensurePlayer() {
 }
 
 void Backend::setVideoSink(QVideoSink *sink) {
+    // The VideoOutput detaches itself as its destruction begins, before its
+    // sink is torn down; the lock waits out a frame being handed over.
     const QVideoFrame frame = currentFrame();
     QMutexLocker locker(&m_outputLock);
-    if (m_output)
-        disconnect(m_output, &QObject::destroyed, this, nullptr);
     m_output = sink;
-    if (!m_output)
-        return;
-    // The decoder's thread must never hand a frame to a VideoOutput that has
-    // gone; close() stops the player before the window goes, and this covers
-    // a window that goes first anyway.
-    connect(m_output, &QObject::destroyed, this, [this] {
-        QMutexLocker locker(&m_outputLock);
-        m_output = nullptr;
-    }, Qt::DirectConnection);
-    if (frame.isValid())
+    if (m_output && frame.isValid())
         m_output->setVideoFrame(frame);
+}
+
+void Backend::setRhi(QRhi *rhi) {
+    // Called on the render thread as the scene graph comes and goes, as Qt's
+    // own VideoOutput sets its sink's.
+    m_rhi = rhi;
+    if (m_sink)
+        m_sink->setRhi(rhi);
 }
 
 void Backend::open(const QStringList &arguments) {
@@ -320,15 +335,27 @@ void Backend::open(const QStringList &arguments) {
     if (items.isEmpty())
         return;
     rememberPosition();
-    int index = 0;
-    if (items.size() == 1 && QFileInfo(items.first()).isFile()) {
-        m_playlist = playlist::siblings(items.first());
-        index = std::max<int>(0, m_playlist.indexOf(items.first()));
-    } else {
-        m_playlist = items;
-    }
+    m_playlist = items;
     m_index = -1;
-    load(index);
+    load(0);
+    // One file brings its folder, which is listed in the background so a big
+    // or slow folder never holds up the picture.
+    if (items.size() == 1 && m_source.isLocalFile()) {
+        const QString file = items.first();
+        const quint64 list = ++m_listGeneration;
+        QPointer<Backend> self(this);
+        (void)QtConcurrent::run([self, file, list] {
+            QEventLoopLocker keepRunning;
+            const QStringList siblings = playlist::siblings(file);
+            QMetaObject::invokeMethod(qApp, [self, file, list, siblings] {
+                if (!self || self->m_listGeneration != list || self->m_playlist != QStringList{file})
+                    return;
+                self->m_playlist = siblings;
+                self->m_index = std::max<int>(0, int(siblings.indexOf(file)));
+                emit self->playlistChanged();
+            }, Qt::QueuedConnection);
+        });
+    }
 }
 
 void Backend::openUrls(const QList<QUrl> &urls) {
@@ -349,6 +376,10 @@ void Backend::load(int index) {
     m_previews.cancel();
     m_previewTimer.stop();
     m_previewsWanted = false;
+    // Work for the last file stops: its ffprobe and subtitle extractions.
+    if (m_cancel)
+        *m_cancel = true;
+    m_cancel = std::make_shared<std::atomic_bool>(false);
     ++m_generation;
     m_index = index;
     const QString item = m_playlist.at(index);
@@ -368,11 +399,8 @@ void Backend::load(int index) {
         m_frame = QVideoFrame();
         m_frameSize = QSize();
     }
-    {
-        QMutexLocker locker(&m_outputLock);
-        if (m_output)
-            m_output->setVideoFrame(QVideoFrame());
-    }
+    // KeepLastFrame ignores an empty frame, so the window clears it itself.
+    emit pictureCleared();
     m_videoSize = QSize();
     m_probe = probe::Info();
     m_probed = false;
@@ -390,6 +418,7 @@ void Backend::load(int index) {
     m_audioLanguages.clear();
     m_audioTrack = -1;
     m_chapters.clear();
+    m_chapterList.clear();
     m_chapterTitle.clear();
     m_info.clear();
     m_previewSource.clear();
@@ -406,17 +435,19 @@ void Backend::load(int index) {
             return;
         }
         m_pendingResume = m_positions.lookup(path);
-        m_sidecars = subtitles::find(path);
-        // ffprobe runs beside the player's own opening of the file, so
-        // chapters and track details arrive without holding up the picture.
+        // ffprobe and the look for subtitle files beside it run beside the
+        // player's own opening of the file, so chapters and track details
+        // arrive without holding up the picture.
         const quint64 generation = m_generation;
+        const auto cancelled = m_cancel;
         QPointer<Backend> self(this);
-        (void)QtConcurrent::run([self, path, generation] {
+        (void)QtConcurrent::run([self, path, generation, cancelled] {
             QEventLoopLocker keepRunning;
-            const probe::Info info = probe::run(path);
-            QMetaObject::invokeMethod(qApp, [self, info, generation] {
+            const probe::Info info = probe::run(path, 15000, cancelled.get());
+            const QList<subtitles::Sidecar> sidecars = subtitles::find(path);
+            QMetaObject::invokeMethod(qApp, [self, info, sidecars, generation] {
                 if (self)
-                    self->onProbed(info, generation);
+                    self->onProbed(info, sidecars, generation);
             }, Qt::QueuedConnection);
         });
     } else {
@@ -473,8 +504,7 @@ void Backend::onStatus() {
         m_ended = true;
         m_position = m_duration;
         emit positionChanged();
-        if (m_source.isLocalFile())
-            m_positions.forget(m_source.toLocalFile());
+        rememberPosition();
     } else if (status == QMediaPlayer::InvalidMedia) {
         if (m_error.isEmpty())
             setError(tr("This file could not be played."));
@@ -482,14 +512,19 @@ void Backend::onStatus() {
     emit statusChanged();
 }
 
-void Backend::onProbed(const probe::Info &info, quint64 generation) {
+void Backend::onProbed(const probe::Info &info, const QList<subtitles::Sidecar> &sidecars, quint64 generation) {
     if (generation != m_generation)
         return;
     m_probe = info;
+    m_sidecars = sidecars;
     m_probed = true;
     m_chapters.clear();
-    for (const probe::Chapter &chapter : m_probe.chapters)
-        m_chapters << QVariantMap{{"start", qint64(chapter.start * 1000)}, {"title", chapter.title}};
+    m_chapterList.clear();
+    for (const probe::Chapter &chapter : m_probe.chapters) {
+        const qint64 start = qint64(chapter.start * 1000);
+        m_chapters << QVariantMap{{"start", start}, {"title", chapter.title}};
+        m_chapterList.push_back({start, chapter.title});
+    }
     updateChapter();
     if (m_title.isEmpty() && !m_probe.title.isEmpty())
         m_title = m_probe.title;
@@ -566,8 +601,7 @@ void Backend::chooseTracks() {
         m_subtitleChoices << choice;
     }
 
-    const QJsonObject preferences = m_positions.preferences();
-    const QString audioPreference = preferences.value("audioLanguage").toString();
+    const QString audioPreference = m_preferences.value("audioLanguage").toString();
     int track = m_player->activeAudioTrack();
     for (const QString &wanted : {audioPreference, m_language}) {
         if (wanted.isEmpty())
@@ -583,7 +617,7 @@ void Backend::chooseTracks() {
 
     // Subtitles start off, unless they were on last time in a language this
     // file has, or the film speaks another language and has the reader's.
-    const QString subtitlePreference = preferences.value("subtitleLanguage").toString();
+    const QString subtitlePreference = m_preferences.value("subtitleLanguage").toString();
     int subtitle = -1;
     auto find = [&](const QString &language) {
         for (int i = 0; i < m_subtitleChoices.size(); ++i)
@@ -611,7 +645,7 @@ void Backend::applyAudio(int track, bool remember) {
     if (m_player->activeAudioTrack() != track)
         m_player->setActiveAudioTrack(track);
     if (remember && !m_audioLanguages.at(track).isEmpty())
-        m_positions.setPreference("audioLanguage", m_audioLanguages.at(track));
+        setPreference("audioLanguage", m_audioLanguages.at(track));
     emit tracksChanged();
 }
 
@@ -624,7 +658,7 @@ void Backend::applySubtitle(int index, bool remember) {
     if (m_subtitleChoice < 0) {
         m_player->setActiveSubtitleTrack(-1);
         if (remember)
-            m_positions.setPreference("subtitleLanguage", "off");
+            setPreference("subtitleLanguage", "off");
     } else {
         const SubtitleChoice &choice = m_subtitleChoices.at(m_subtitleChoice);
         // An embedded track shows through Qt at once, which only shows a cue
@@ -634,7 +668,7 @@ void Backend::applySubtitle(int index, bool remember) {
         m_player->setActiveSubtitleTrack(choice.embedded);
         loadCues(m_subtitleChoice);
         if (remember && !choice.language.isEmpty())
-            m_positions.setPreference("subtitleLanguage", choice.language);
+            setPreference("subtitleLanguage", choice.language);
     }
     updateSubtitleText();
     emit tracksChanged();
@@ -648,22 +682,27 @@ void Backend::loadCues(int index) {
             m_player->setActiveSubtitleTrack(-1);
         return;
     }
+    if (choice.cuesLoading)
+        return;
     const bool embedded = choice.embedded >= 0;
     const QString path = embedded ? m_source.toLocalFile() : m_sidecars.at(choice.sidecar).path;
     // ffmpeg's 0:s:N counts subtitle streams the way Qt numbers its tracks.
     const int stream = embedded ? choice.embedded : 0;
     if (path.isEmpty())
         return;
+    choice.cuesLoading = true;
     const quint64 generation = m_generation;
+    const auto cancelled = m_cancel;
     QPointer<Backend> self(this);
-    (void)QtConcurrent::run([self, path, stream, generation, index, embedded] {
+    (void)QtConcurrent::run([self, path, stream, generation, index, embedded, cancelled] {
         QEventLoopLocker keepRunning;
         QString error;
-        const QList<subtitles::Cue> cues = subtitles::load(path, stream, &error);
+        const QList<subtitles::Cue> cues = subtitles::load(path, stream, &error, cancelled.get());
         QMetaObject::invokeMethod(qApp, [self, cues, error, generation, index, embedded] {
             if (!self || self->m_generation != generation || index >= self->m_subtitleChoices.size())
                 return;
             SubtitleChoice &choice = self->m_subtitleChoices[index];
+            choice.cuesLoading = false;
             // An embedded track whose cues couldn't be read stays with Qt.
             if (embedded && cues.isEmpty())
                 return;
@@ -703,13 +742,12 @@ void Backend::updateChapter() {
 }
 
 QString Backend::chapterAt(qint64 ms) const {
+    // Asked on every position update, so it walks plain values.
     QString title;
-    for (const QVariant &value : m_chapters) {
-        const QVariantMap chapter = value.toMap();
-        if (chapter.value("start").toLongLong() <= ms)
-            title = chapter.value("title").toString();
-        else
+    for (const auto &[start, name] : m_chapterList) {
+        if (start > ms)
             break;
+        title = name;
     }
     return title;
 }
@@ -919,8 +957,8 @@ void Backend::setVolume(double volume) {
     if (m_muted && m_volume > 0)
         m_muted = false;
     applyVolume();
-    m_positions.setPreference("volume", std::round(m_volume * 100) / 100);
-    m_positions.setPreference("muted", m_muted);
+    setPreference("volume", std::round(m_volume * 100) / 100);
+    setPreference("muted", m_muted);
     emit volumeChanged();
 }
 
@@ -931,7 +969,7 @@ void Backend::changeVolume(double delta) {
 void Backend::toggleMute() {
     m_muted = !m_muted;
     applyVolume();
-    m_positions.setPreference("muted", m_muted);
+    setPreference("muted", m_muted);
     emit volumeChanged();
 }
 
@@ -953,6 +991,7 @@ bool Backend::next() {
     if (m_index + 1 >= m_playlist.size())
         return false;
     rememberPosition();
+    ++m_listGeneration;
     load(m_index + 1);
     return true;
 }
@@ -961,29 +1000,28 @@ bool Backend::previous() {
     if (m_index <= 0)
         return false;
     rememberPosition();
+    ++m_listGeneration;
     load(m_index - 1);
     return true;
 }
 
 void Backend::jumpChapter(int direction) {
-    if (m_chapters.isEmpty())
+    if (m_chapterList.empty())
         return;
     qint64 target = -1;
     if (direction > 0) {
-        for (const QVariant &value : m_chapters) {
-            const qint64 start = value.toMap().value("start").toLongLong();
-            if (start > m_position + 500) {
-                target = start;
+        for (const auto &chapter : m_chapterList) {
+            if (chapter.first > m_position + 500) {
+                target = chapter.first;
                 break;
             }
         }
     } else {
         // Back to the start of this chapter, or the one before when already
         // within its first few seconds, as a CD player's previous does.
-        for (auto it = m_chapters.crbegin(); it != m_chapters.crend(); ++it) {
-            const qint64 start = it->toMap().value("start").toLongLong();
-            if (start < m_position - 3000) {
-                target = start;
+        for (auto it = m_chapterList.crbegin(); it != m_chapterList.crend(); ++it) {
+            if (it->first < m_position - 3000) {
+                target = it->first;
                 break;
             }
         }
@@ -995,19 +1033,24 @@ void Backend::jumpChapter(int direction) {
 }
 
 void Backend::copyFrame() {
-    // The frame on screen now, latched before anything else can move it.
-    QVideoFrame frame = currentFrame();
+    // The frame on screen now, latched before anything else can move it, and
+    // converted in a worker: a 4K frame read back from the GPU would stall
+    // the picture.
+    const QVideoFrame frame = currentFrame();
     if (!frame.isValid())
         return;
-    const QImage image = frame.toImage();
-    if (image.isNull()) {
-        emit notice(tr("Could not copy this frame."));
-        return;
-    }
     const QString at = clock(m_position);
     QPointer<Backend> self(this);
-    (void)QtConcurrent::run([self, image, at] {
+    (void)QtConcurrent::run([self, frame, at]() mutable {
         QEventLoopLocker keepRunning;
+        const QImage image = frame.toImage();
+        if (image.isNull()) {
+            QMetaObject::invokeMethod(qApp, [self] {
+                if (self)
+                    emit self->notice(tr("Could not copy this frame."));
+            }, Qt::QueuedConnection);
+            return;
+        }
         QByteArray png;
         QBuffer buffer(&png);
         buffer.open(QIODevice::WriteOnly);
@@ -1024,15 +1067,10 @@ void Backend::copyFrame() {
 }
 
 void Backend::saveFrame() {
-    QVideoFrame frame = currentFrame();
+    const QVideoFrame frame = currentFrame();
     if (!frame.isValid())
         return;
-    const QImage image = frame.toImage();
-    if (image.isNull()) {
-        emit notice(tr("Could not save this frame."));
-        return;
-    }
-    m_pendingFrame = image;
+    m_pendingFrame = frame;
     QString folder = QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
     if (!QDir(folder).exists())
         folder = QDir::homePath();
@@ -1042,9 +1080,9 @@ void Backend::saveFrame() {
 }
 
 bool Backend::takeFirstRunHint() {
-    if (m_positions.preferences().value("hinted").toBool())
+    if (m_preferences.value("hinted").toBool())
         return false;
-    m_positions.setPreference("hinted", true);
+    setPreference("hinted", true);
     return true;
 }
 
@@ -1062,18 +1100,51 @@ void Backend::trimInOmacut() {
 void Backend::rememberPosition() {
     if (!m_player || !m_source.isLocalFile() || !m_loaded || !m_error.isEmpty())
         return;
-    if (m_ended)
-        m_positions.forget(m_source.toLocalFile());
-    else
-        m_positions.update(m_source.toLocalFile(), m_position, m_duration);
+    const QString file = m_source.toLocalFile();
+    const qint64 position = m_ended ? m_duration : m_position, duration = m_duration;
+    Positions positions = m_positions;
+    m_writer.start([positions, file, position, duration]() mutable {
+        positions.update(file, position, duration);
+    });
+}
+
+void Backend::setPreference(const QString &key, const QJsonValue &value) {
+    if (m_preferences.value(key) == value)
+        return;
+    m_preferences.insert(key, value);
+    m_changedPreferences.insert(key);
+    m_preferenceTimer.start();
+}
+
+void Backend::writePreferences() {
+    m_preferenceTimer.stop();
+    if (m_changedPreferences.isEmpty())
+        return;
+    QJsonObject changed;
+    for (const QString &key : std::as_const(m_changedPreferences))
+        changed.insert(key, m_preferences.value(key));
+    m_changedPreferences.clear();
+    Positions positions = m_positions;
+    m_writer.start([positions, changed]() mutable { positions.setPreferences(changed); });
+}
+
+void Backend::flush() {
+    writePreferences();
+    m_writer.waitForDone();
 }
 
 void Backend::close() {
+    // Once: the window's closing and the application's quitting both ask,
+    // and stopping the player moves it back to the start.
     rememberPosition();
+    m_loaded = false;
     m_previews.cancel();
     m_previewTimer.stop();
+    if (m_cancel)
+        *m_cancel = true;
     if (m_player)
         m_player->stop();
+    flush();
 }
 
 void Backend::startPreviews() {

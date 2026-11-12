@@ -24,6 +24,8 @@ public:
 
     QJsonObject preferences() const;
     void setPreference(const QString &key, const QJsonValue &value);
+    // Several at once, in one locked write.
+    void setPreferences(const QJsonObject &changed);
 
     // The key a file is remembered under: its path, size and modification
     // time, hashed, so the file holds no names and an edited file starts over.

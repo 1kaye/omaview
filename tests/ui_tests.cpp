@@ -255,11 +255,13 @@ private slots:
 
         // Tab brings the overlay in, and Esc puts it away.
         auto *overlay = find<QQuickItem>(w.get(), "overlay");
+        QVERIFY(!overlay->property("item").value<QQuickItem *>());
         QTest::keyClick(w->window, Qt::Key_Tab);
-        QTRY_COMPARE(overlay->property("opacity").toDouble(), 1.0);
+        QTRY_VERIFY(overlay->property("item").value<QQuickItem *>());
+        QTRY_COMPARE(overlay->property("item").value<QQuickItem *>()->opacity(), 1.0);
         shot(w.get(), "2-overlay");
         QTest::keyClick(w->window, Qt::Key_Escape);
-        QTRY_VERIFY(!overlay->isVisible());
+        QTRY_VERIFY(!overlay->property("item").value<QQuickItem *>());
 
         // I and ? open their cards; Escape closes them.
         auto *info = w->window->findChild<QObject *>("info");

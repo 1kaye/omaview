@@ -1,16 +1,22 @@
 #pragma once
 
 #include <QImage>
+#include <QJsonObject>
 #include <QMutex>
 #include <QObject>
 #include <QPointer>
+#include <QSet>
 #include <QSize>
 #include <QStringList>
+#include <QThreadPool>
 #include <QTimer>
 #include <QUrl>
 #include <QVariantList>
 #include <QVideoFrame>
+#include <atomic>
 #include <memory>
+#include <utility>
+#include <vector>
 
 #include "frames.h"
 #include "positions.h"
@@ -20,6 +26,7 @@
 class FilePicker;
 class QAudioOutput;
 class QMediaPlayer;
+class QRhi;
 class QVideoSink;
 
 // What the window talks to. It owns the player, created with the first file
@@ -158,10 +165,17 @@ public:
     Q_INVOKABLE void trimInOmacut();
     // True once, the first time any file is opened, for the "Press Tab" hint.
     Q_INVOKABLE bool takeFirstRunHint();
-    // The window's VideoOutput, once its Loader has made it.
+    // The window's VideoOutput, once its Loader has made it, and null as it
+    // goes.
     Q_INVOKABLE void setVideoSink(QVideoSink *sink);
-    // Remembers where the open file was left; the window calls it on close.
+    // The window's GPU context, from the render thread as the scene graph
+    // starts and stops, so decoded frames stay on the GPU.
+    void setRhi(QRhi *rhi);
+    // Remembers where the open file was left and stops; the window calls it
+    // on close, and the application again as it quits, which does nothing.
     Q_INVOKABLE void close();
+    // Writes remembered choices now, and waits for every write to finish.
+    void flush();
 
     // The frame on screen now, latched for Copy and Save.
     QVideoFrame currentFrame() const {
@@ -196,6 +210,8 @@ signals:
     void raiseRequested();
     // MPRIS: a seek the player did on its own terms.
     void seeked(qint64 ms);
+    // A new file: the window clears the last one's picture.
+    void pictureCleared();
 
 private:
     struct SubtitleChoice {
@@ -205,6 +221,7 @@ private:
         QString language;   // two-letter where known
         QList<subtitles::Cue> cues;
         bool cuesLoaded = false;
+        bool cuesLoading = false;
     };
 
     void ensurePlayer();
@@ -214,7 +231,9 @@ private:
     void setPosition(qint64 ms);
     void onStatus();
     void onTracks();
-    void onProbed(const probe::Info &info, quint64 generation);
+    void onProbed(const probe::Info &info, const QList<subtitles::Sidecar> &sidecars, quint64 generation);
+    void setPreference(const QString &key, const QJsonValue &value);
+    void writePreferences();
     void chooseTracks();
     void applySubtitle(int choice, bool remember);
     void applyAudio(int track, bool remember);
@@ -242,12 +261,22 @@ private:
     QSize m_frameSize;
     QMutex m_outputLock;
     QVideoSink *m_output = nullptr;  // the window's
-    QImage m_pendingFrame;  // latched by Save frame while the dialog is up
+    QVideoFrame m_pendingFrame;  // latched by Save frame while the dialog is up
+    std::atomic<QRhi *> m_rhi{nullptr};
 
     QStringList m_playlist;
     int m_index = -1;
     QUrl m_source;
-    quint64 m_generation = 0;  // which file async work belongs to
+    quint64 m_generation = 0;      // which file async work belongs to
+    quint64 m_listGeneration = 0;  // which open a folder listing belongs to
+    // Set when the file changes or the window closes; its ffprobe and
+    // subtitle extractions check it and stop.
+    std::shared_ptr<std::atomic_bool> m_cancel;
+
+    QJsonObject m_preferences;
+    QSet<QString> m_changedPreferences;
+    QTimer m_preferenceTimer;
+    QThreadPool m_writer;  // one thread, so writes land in order
 
     QString m_title;
     QString m_artist;
@@ -283,6 +312,7 @@ private:
     int m_audioTrack = -1;
 
     QVariantList m_chapters;
+    std::vector<std::pair<qint64, QString>> m_chapterList;
     QString m_chapterTitle;
     QVariantList m_info;
 

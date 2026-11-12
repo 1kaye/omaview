@@ -1,6 +1,7 @@
 #include "probe.h"
 
 #include <QCoreApplication>
+#include <QElapsedTimer>
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -113,7 +114,7 @@ Info parse(const QByteArray &json, const QString &path) {
     return info;
 }
 
-Info run(const QString &path, int timeoutMs) {
+Info run(const QString &path, int timeoutMs, const std::atomic_bool *cancelled) {
     Info info;
     info.path = path;
     const QString ffprobe = toolPath("ffprobe");
@@ -128,11 +129,16 @@ Info run(const QString &path, int timeoutMs) {
         info.error = Texts::tr("ffprobe could not be started.");
         return info;
     }
-    if (!process.waitForFinished(timeoutMs)) {
-        process.kill();
-        process.waitForFinished(1000);
-        info.error = Texts::tr("ffprobe took too long reading this file.");
-        return info;
+    QElapsedTimer clock;
+    clock.start();
+    // In slices, so a file that is no longer wanted stops its ffprobe.
+    while (!process.waitForFinished(100) && process.state() != QProcess::NotRunning) {
+        if ((cancelled && *cancelled) || clock.elapsed() > timeoutMs) {
+            process.kill();
+            process.waitForFinished(1000);
+            info.error = Texts::tr("ffprobe took too long reading this file.");
+            return info;
+        }
     }
     if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0) {
         const QString message = QString::fromUtf8(process.readAllStandardError()).trimmed().section('\n', -1);
