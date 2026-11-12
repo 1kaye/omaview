@@ -23,6 +23,7 @@
 #include "filepicker.h"
 #include "playlist.h"
 #include "portalfilepicker.h"
+#include "texts.h"
 
 namespace {
 
@@ -51,9 +52,9 @@ QString codecName(const probe::Stream &stream) {
 QString channelName(const probe::Stream &stream) {
     const QString layout = stream.channelLayout.section('(', 0, 0);
     if (layout == "mono" || stream.channels == 1)
-        return QCoreApplication::translate("Backend", "mono");
+        return Texts::tr("mono");
     if (layout == "stereo" || stream.channels == 2)
-        return QCoreApplication::translate("Backend", "stereo");
+        return Texts::tr("stereo");
     if (!layout.isEmpty() && layout.front().isDigit())
         return layout;
     return stream.channels > 0 ? QString::number(stream.channels) : QString();
@@ -361,6 +362,10 @@ void Backend::load(int index) {
         m_probed = true;
     }
 
+    // Setting the source the player already has does nothing, so reopening
+    // the same file clears it first.
+    if (m_player->source() == m_source)
+        m_player->setSource(QUrl());
     m_player->setSource(m_source);
     m_player->setPlaybackRate(m_rate);
     emit mediaChanged();

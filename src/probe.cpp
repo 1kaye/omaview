@@ -8,6 +8,8 @@
 #include <QProcess>
 #include <QStandardPaths>
 
+#include "texts.h"
+
 namespace probe {
 
 namespace {
@@ -63,7 +65,7 @@ Info parse(const QByteArray &json, const QString &path) {
     QJsonParseError parseError;
     const QJsonObject root = QJsonDocument::fromJson(json, &parseError).object();
     if (parseError.error != QJsonParseError::NoError || root.isEmpty()) {
-        info.error = QCoreApplication::translate("probe", "ffprobe gave an answer Showtime could not read.");
+        info.error = Texts::tr("ffprobe gave an answer Showtime could not read.");
         return info;
     }
     const QJsonObject format = root.value("format").toObject();
@@ -116,25 +118,25 @@ Info run(const QString &path, int timeoutMs) {
     info.path = path;
     const QString ffprobe = toolPath("ffprobe");
     if (ffprobe.isEmpty()) {
-        info.error = QCoreApplication::translate("probe", "ffprobe was not found. Install ffmpeg.");
+        info.error = Texts::tr("ffprobe was not found. Install ffmpeg.");
         return info;
     }
     QProcess process;
     process.start(ffprobe, {"-v", "error", "-print_format", "json", "-show_format", "-show_streams",
                             "-show_chapters", "--", path});
     if (!process.waitForStarted(5000)) {
-        info.error = QCoreApplication::translate("probe", "ffprobe could not be started.");
+        info.error = Texts::tr("ffprobe could not be started.");
         return info;
     }
     if (!process.waitForFinished(timeoutMs)) {
         process.kill();
         process.waitForFinished(1000);
-        info.error = QCoreApplication::translate("probe", "ffprobe took too long reading this file.");
+        info.error = Texts::tr("ffprobe took too long reading this file.");
         return info;
     }
     if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0) {
         const QString message = QString::fromUtf8(process.readAllStandardError()).trimmed().section('\n', -1);
-        info.error = message.isEmpty() ? QCoreApplication::translate("probe", "ffprobe could not read this file.")
+        info.error = message.isEmpty() ? Texts::tr("ffprobe could not read this file.")
                                        : message;
         return info;
     }

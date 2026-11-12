@@ -10,6 +10,7 @@
 #include <unistd.h>
 
 #include "probe.h"
+#include "texts.h"
 
 namespace subtitles {
 
@@ -96,7 +97,7 @@ QList<Cue> load(const QString &path, int stream, QString *error) {
     const QString ffmpeg = probe::toolPath("ffmpeg");
     if (ffmpeg.isEmpty()) {
         if (error)
-            *error = QCoreApplication::translate("subtitles", "ffmpeg was not found. Install ffmpeg.");
+            *error = Texts::tr("ffmpeg was not found. Install ffmpeg.");
         return {};
     }
     QProcess process;
@@ -107,7 +108,7 @@ QList<Cue> load(const QString &path, int stream, QString *error) {
     if (!process.waitForFinished(120000) || process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0) {
         process.kill();
         if (error)
-            *error = QCoreApplication::translate("subtitles", "Could not read the subtitles in %1.")
+            *error = Texts::tr("Could not read the subtitles in %1.")
                          .arg(QFileInfo(path).fileName());
         return {};
     }

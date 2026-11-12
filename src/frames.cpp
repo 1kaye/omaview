@@ -20,6 +20,7 @@
 
 #include "positions.h"
 #include "probe.h"
+#include "texts.h"
 
 namespace frames {
 
@@ -35,7 +36,7 @@ QByteArray ffmpeg(const QStringList &arguments, int timeoutMs, QString *error, b
     const QString tool = probe::toolPath("ffmpeg");
     if (tool.isEmpty()) {
         if (error)
-            *error = QCoreApplication::translate("frames", "ffmpeg was not found. Install ffmpeg.");
+            *error = Texts::tr("ffmpeg was not found. Install ffmpeg.");
         return {};
     }
     QProcess process;
@@ -52,14 +53,14 @@ QByteArray ffmpeg(const QStringList &arguments, int timeoutMs, QString *error, b
             process.kill();
             process.waitForFinished(1000);
             if (error)
-                *error = QCoreApplication::translate("frames", "ffmpeg took too long.");
+                *error = Texts::tr("ffmpeg took too long.");
             return {};
         }
     }
     if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0) {
         if (error) {
             const QString message = QString::fromUtf8(process.readAllStandardError()).trimmed().section('\n', -1);
-            *error = message.isEmpty() ? QCoreApplication::translate("frames", "ffmpeg could not read this file.")
+            *error = message.isEmpty() ? Texts::tr("ffmpeg could not read this file.")
                                        : message;
         }
         return {};
@@ -76,12 +77,12 @@ QImage extract(const QString &path, double at, QString *error) {
                                   60000, error);
     if (png.isEmpty()) {
         if (error && error->isEmpty())
-            *error = QCoreApplication::translate("frames", "There is no frame at that time.");
+            *error = Texts::tr("There is no frame at that time.");
         return {};
     }
     QImage image = QImage::fromData(png, "PNG");
     if (image.isNull() && error)
-        *error = QCoreApplication::translate("frames", "ffmpeg gave a frame Showtime could not read.");
+        *error = Texts::tr("ffmpeg gave a frame Showtime could not read.");
     return image;
 }
 

@@ -13,6 +13,8 @@
 #include <QRandomGenerator>
 #include <QStandardPaths>
 
+#include "texts.h"
+
 namespace {
 struct PortalFilterRule {
     uint type;
@@ -72,18 +74,18 @@ PortalFileFilter mediaFilter() {
     for (const char *extension : {"mkv", "mp4", "m4v", "mov", "webm", "avi", "mpg", "mpeg", "ts", "m2ts",
                                   "ogv", "mp3", "flac", "ogg", "opus", "m4a", "wav"})
         rules.append({0, QStringLiteral("*.") + QLatin1String(extension)});
-    return {QCoreApplication::translate("PortalFilePicker", "Videos and music"), rules};
+    return {Texts::tr("Videos and music"), rules};
 }
 
 PortalFileFilters mediaFilters() {
     return {
         mediaFilter(),
-        {QCoreApplication::translate("PortalFilePicker", "All files"), {{0, QStringLiteral("*")}}},
+        {Texts::tr("All files"), {{0, QStringLiteral("*")}}},
     };
 }
 
 PortalFileFilter pngFilter() {
-    return {QCoreApplication::translate("PortalFilePicker", "PNG image"), {{0, QStringLiteral("*.png")}}};
+    return {Texts::tr("PNG image"), {{0, QStringLiteral("*.png")}}};
 }
 
 QString portalToken() {

@@ -13,16 +13,16 @@ const QString objectPath = QStringLiteral("/org/mpris/MediaPlayer2");
 const QString playerInterface = QStringLiteral("org.mpris.MediaPlayer2.Player");
 }
 
-Mpris::Mpris(Backend *backend, QObject *parent) : QObject(parent), m_backend(backend) {
+Mpris::Mpris(Backend *backend, QObject *parent, const QDBusConnection &bus)
+    : QObject(parent), m_backend(backend), m_bus(bus) {
     auto *root = new MprisRoot(this);
     auto *player = new MprisPlayer(this);
     Q_UNUSED(root);
 
-    QDBusConnection bus = QDBusConnection::sessionBus();
-    if (!bus.isConnected())
+    if (!m_bus.isConnected())
         return;
     const QString name = QStringLiteral("org.mpris.MediaPlayer2.showtime.instance%1").arg(QCoreApplication::applicationPid());
-    if (!bus.registerObject(objectPath, this) || !bus.registerService(name))
+    if (!m_bus.registerObject(objectPath, this) || !m_bus.registerService(name))
         return;
     m_service = name;
 
@@ -51,9 +51,8 @@ Mpris::Mpris(Backend *backend, QObject *parent) : QObject(parent), m_backend(bac
 Mpris::~Mpris() {
     if (m_service.isEmpty())
         return;
-    QDBusConnection bus = QDBusConnection::sessionBus();
-    bus.unregisterService(m_service);
-    bus.unregisterObject(objectPath);
+    m_bus.unregisterService(m_service);
+    m_bus.unregisterObject(objectPath);
 }
 
 QString Mpris::playbackStatus() const {
@@ -82,7 +81,7 @@ void Mpris::propertiesChanged(const QString &interface, const QVariantMap &chang
     QDBusMessage signal = QDBusMessage::createSignal(objectPath, QStringLiteral("org.freedesktop.DBus.Properties"),
                                                      QStringLiteral("PropertiesChanged"));
     signal << interface << changed << QStringList();
-    QDBusConnection::sessionBus().send(signal);
+    m_bus.send(signal);
 }
 
 MprisRoot::MprisRoot(Mpris *parent) : QDBusAbstractAdaptor(parent), m_mpris(parent) {}

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QDBusAbstractAdaptor>
+#include <QDBusConnection>
 #include <QDBusObjectPath>
 #include <QObject>
 #include <QVariantMap>
@@ -14,7 +15,9 @@ class Mpris : public QObject {
     Q_OBJECT
 
 public:
-    explicit Mpris(Backend *backend, QObject *parent = nullptr);
+    // Tests pass a private bus, so a test player never reaches the desktop's.
+    explicit Mpris(Backend *backend, QObject *parent = nullptr,
+                   const QDBusConnection &bus = QDBusConnection::sessionBus());
     ~Mpris() override;
 
     bool registered() const { return !m_service.isEmpty(); }
@@ -28,6 +31,7 @@ private:
     void propertiesChanged(const QString &interface, const QVariantMap &changed);
 
     Backend *m_backend;
+    QDBusConnection m_bus;
     QString m_service;
 };
 
