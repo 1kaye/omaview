@@ -11,6 +11,7 @@
 #include <QLocale>
 #include <QMediaMetaData>
 #include <QMediaPlayer>
+#include <QMutexLocker>
 #include <QPointer>
 #include <QProcess>
 #include <QStandardPaths>
@@ -129,8 +130,14 @@ Backend::Backend(const Options &options, QObject *parent)
 
 Backend::~Backend() {
     m_previews.cancel();
-    if (m_player)
+    if (m_player) {
+        // No frame may reach a backend that is going: detach the sink before
+        // the decoder's thread can call into it again.
+        m_sink->disconnect(this);
         m_player->disconnect(this);
+        m_player->setVideoSink(nullptr);
+        m_player->stop();
+    }
 }
 
 void Backend::setLanguage(const QString &language) {
@@ -200,19 +207,38 @@ void Backend::ensurePlayer() {
     // sidecar subtitles in one style and the frame on screen is at hand.
     m_sink = new QVideoSink(this);
     m_player->setVideoSink(m_sink);
-    connect(m_sink, &QVideoSink::videoFrameChanged, this, [this](const QVideoFrame &frame) {
-        // The player clears the sink at the end of a file; the last frame
-        // stays on screen instead, and a new file clears it in load().
-        if (!frame.isValid())
-            return;
-        m_frame = frame;
-        if (m_outputSink)
-            m_outputSink->setVideoFrame(frame);
-        if (frame.isValid() && frame.size() != m_videoSize && m_hasVideo) {
-            m_videoSize = frame.size();
-            emit videoSizeChanged();
-        }
-    });
+    // Frames are handed on from the decoder's thread, as Qt's own player
+    // hands them to a VideoOutput, so a busy GUI thread never makes the
+    // picture stutter. The sink shares the window's GPU context, so a frame
+    // decoded on the GPU stays there.
+    connect(
+        m_sink, &QVideoSink::videoFrameChanged, this,
+        [this](const QVideoFrame &frame) {
+            // The player clears the sink at the end of a file; the last frame
+            // stays on screen instead, and a new file clears it in load().
+            if (!frame.isValid())
+                return;
+            QSize size;
+            {
+                QMutexLocker locker(&m_frameLock);
+                m_frame = frame;
+                if (m_output) {
+                    if (m_sink->rhi() != m_output->rhi())
+                        m_sink->setRhi(m_output->rhi());
+                    m_output->setVideoFrame(frame);
+                }
+                if (frame.size() != m_frameSize)
+                    size = m_frameSize = frame.size();
+            }
+            if (size.isValid())
+                QMetaObject::invokeMethod(this, [this, size] {
+                    if (size != m_videoSize) {
+                        m_videoSize = size;
+                        emit videoSizeChanged();
+                    }
+                }, Qt::QueuedConnection);
+        },
+        Qt::DirectConnection);
     connect(m_sink, &QVideoSink::subtitleTextChanged, this, [this](const QString &text) {
         m_embeddedText = text;
         updateSubtitleText();
@@ -253,9 +279,20 @@ void Backend::ensurePlayer() {
 }
 
 void Backend::setVideoSink(QVideoSink *sink) {
-    m_outputSink = sink;
-    if (m_outputSink && m_frame.isValid())
-        m_outputSink->setVideoFrame(m_frame);
+    QMutexLocker locker(&m_frameLock);
+    if (m_output)
+        disconnect(m_output, &QObject::destroyed, this, nullptr);
+    m_output = sink;
+    if (!m_output)
+        return;
+    // The window's VideoOutput goes before the backend does; the decoder
+    // thread must never hand a frame to it after that.
+    connect(m_output, &QObject::destroyed, this, [this] {
+        QMutexLocker locker(&m_frameLock);
+        m_output = nullptr;
+    }, Qt::DirectConnection);
+    if (m_frame.isValid())
+        m_output->setVideoFrame(m_frame);
 }
 
 void Backend::open(const QStringList &arguments) {
@@ -309,9 +346,13 @@ void Backend::load(int index) {
     m_ended = false;
     m_loaded = false;
     m_hasVideo = false;
-    m_frame = QVideoFrame();
-    if (m_outputSink)
-        m_outputSink->setVideoFrame(QVideoFrame());
+    {
+        QMutexLocker locker(&m_frameLock);
+        m_frame = QVideoFrame();
+        m_frameSize = QSize();
+        if (m_output)
+            m_output->setVideoFrame(QVideoFrame());
+    }
     m_videoSize = QSize();
     m_probe = probe::Info();
     m_probed = false;
@@ -825,11 +866,12 @@ void Backend::stepFrame(int direction) {
     // Qt has no frame step, so this seeks by the shown frame's own
     // timestamps: just past its end, or just before its start, which is right
     // for variable frame rates too.
-    if (m_frame.isValid() && m_frame.startTime() >= 0 && m_frame.endTime() > m_frame.startTime()) {
+    const QVideoFrame frame = currentFrame();
+    if (frame.isValid() && frame.startTime() >= 0 && frame.endTime() > frame.startTime()) {
         if (direction > 0)
-            setPosition(m_frame.endTime() / 1000 + 1);
+            setPosition(frame.endTime() / 1000 + 1);
         else
-            setPosition(std::max<qint64>(0, m_frame.startTime() / 1000 - 1));
+            setPosition(std::max<qint64>(0, frame.startTime() / 1000 - 1));
         return;
     }
     const probe::Stream *video = m_probe.video();
@@ -932,10 +974,11 @@ void Backend::jumpChapter(int direction) {
 }
 
 void Backend::copyFrame() {
-    if (!m_frame.isValid())
-        return;
     // The frame on screen now, latched before anything else can move it.
-    const QImage image = QVideoFrame(m_frame).toImage();
+    QVideoFrame frame = currentFrame();
+    if (!frame.isValid())
+        return;
+    const QImage image = frame.toImage();
     if (image.isNull()) {
         emit notice(tr("Could not copy this frame."));
         return;
@@ -960,9 +1003,10 @@ void Backend::copyFrame() {
 }
 
 void Backend::saveFrame() {
-    if (!m_frame.isValid())
+    QVideoFrame frame = currentFrame();
+    if (!frame.isValid())
         return;
-    const QImage image = QVideoFrame(m_frame).toImage();
+    const QImage image = frame.toImage();
     if (image.isNull()) {
         emit notice(tr("Could not save this frame."));
         return;

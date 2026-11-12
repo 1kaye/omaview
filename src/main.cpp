@@ -9,6 +9,8 @@
 #include <QQuickWindow>
 #include <QUrl>
 #include <cstdio>
+#include <memory>
+#include <utility>
 
 #include "backend.h"
 #include "cli.h"
@@ -80,10 +82,19 @@ int main(int argc, char *argv[]) {
     QObject::connect(&app, &QCoreApplication::aboutToQuit, &backend, &Backend::close);
 
     // `showtime open a.mkv` and `showtime a.mkv`, which launchers use, alike.
+    // The file opens once the window has drawn, since starting the player
+    // probes the GPU's decoders on this thread.
     QStringList files = app.arguments().mid(1);
     if (!files.isEmpty() && files.first() == "open")
         files.removeFirst();
-    backend.open(files);
+    if (!files.isEmpty()) {
+        auto opened = std::make_shared<bool>(false);
+        QObject::connect(window, &QQuickWindow::frameSwapped, &backend, [&backend, files, opened] {
+            if (std::exchange(*opened, true))
+                return;
+            QMetaObject::invokeMethod(&backend, [&backend, files] { backend.open(files); }, Qt::QueuedConnection);
+        }, Qt::QueuedConnection);
+    }
 
     return app.exec();
 }

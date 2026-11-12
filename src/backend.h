@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QImage>
+#include <QMutex>
 #include <QObject>
 #include <QPointer>
 #include <QSize>
@@ -163,7 +164,10 @@ public:
     Q_INVOKABLE void close();
 
     // The frame on screen now, latched for Copy and Save.
-    QVideoFrame currentFrame() const { return m_frame; }
+    QVideoFrame currentFrame() const {
+        QMutexLocker locker(&m_frameLock);
+        return m_frame;
+    }
 
 signals:
     void playerReadyChanged();
@@ -231,8 +235,11 @@ private:
     QMediaPlayer *m_player = nullptr;
     QAudioOutput *m_audio = nullptr;
     QVideoSink *m_sink = nullptr;              // the player's, which forwards
-    QPointer<QVideoSink> m_outputSink;         // the window's
+    // Shared with the decoder's thread, which hands frames on.
+    mutable QMutex m_frameLock;
+    QVideoSink *m_output = nullptr;  // the window's
     QVideoFrame m_frame;
+    QSize m_frameSize;
     QImage m_pendingFrame;  // latched by Save frame while the dialog is up
 
     QStringList m_playlist;

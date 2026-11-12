@@ -1,3 +1,30 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
-  <rect width="64" height="64" rx="14" fill="#FFD60A"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <title>Showtime</title>
+  <desc>A dark picture with a yellow play triangle and a thin yellow progress line beneath it, on Omacut's dark tile.</desc>
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2c2c2f"/>
+      <stop offset="1" stop-color="#161618"/>
+    </linearGradient>
+    <linearGradient id="picture" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1d1d22"/>
+      <stop offset="1" stop-color="#0e0e10"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFE45C"/>
+      <stop offset="1" stop-color="#FFD60A"/>
+    </linearGradient>
+  </defs>
+
+  <!-- App background, as Omacut's -->
+  <rect x="16" y="16" width="480" height="480" rx="112" fill="url(#tile)"/>
+
+  <!-- The picture, 16:9, and nothing else on it but play -->
+  <rect x="60" y="122" width="392" height="221" rx="24" fill="url(#picture)" stroke="#3a3a3e" stroke-width="4"/>
+  <path d="M218 174 L322 232.5 L218 291 Z" fill="url(#accent)" stroke="url(#accent)" stroke-width="18" stroke-linejoin="round"/>
+
+  <!-- The progress line: played in yellow, the rest dim -->
+  <rect x="60" y="374" width="392" height="14" rx="7" fill="#3a3a3e"/>
+  <rect x="60" y="374" width="160" height="14" rx="7" fill="url(#accent)"/>
+  <circle cx="220" cy="381" r="17" fill="url(#accent)"/>
 </svg>

@@ -14,8 +14,10 @@ ApplicationWindow {
     minimumHeight: 200
     visible: true
     title: backend.hasMedia ? backend.title + " — Showtime" : "Showtime"
-    // The picture's surround is black whatever the theme, as every player's is.
+    // The picture's surround is black whatever the theme, as every player's
+    // is; ApplicationWindow would otherwise paint Material's background.
     color: "black"
+    background: Rectangle { color: "black" }
 
     Material.theme: theme.light ? Material.Light : Material.Dark
     Material.accent: theme.accent

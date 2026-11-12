@@ -127,8 +127,11 @@ class UiTests : public QObject {
             return;
         QDir().mkpath(directory);
         const QColor background = w->window->color();
+        auto *backgroundItem = w->window->property("background").value<QQuickItem *>();
         w->window->setColor(Qt::transparent);
-        const QImage ui = w->window->grabWindow();
+        backgroundItem->setVisible(false);
+        QImage ui = w->window->grabWindow();
+        backgroundItem->setVisible(true);
         w->window->setColor(background);
         QImage image(ui.size(), QImage::Format_ARGB32_Premultiplied);
         image.fill(background);
@@ -295,6 +298,56 @@ private slots:
         QCOMPARE(w->backend->nextName(), QString());
         QTest::keyClick(w->window, Qt::Key_N);
         QTRY_VERIFY(find<QQuickItem>(w.get(), "centerValue")->property("text").toString().contains("last"));
+        QVERIFY2(w->warnings.isEmpty(), qPrintable(w->warnings.join('\n')));
+        close(w);
+    }
+
+    void aSongShowsItsCover() {
+        QVERIFY(QProcess::execute("ffmpeg", {"-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=300x300:duration=1",
+                                             "-frames:v", "1", m_dir.filePath("cover.png")}) == 0);
+        const QString song = m_dir.filePath("song.mp3");
+        QVERIFY(QProcess::execute("ffmpeg", {"-v", "error", "-y", "-f", "lavfi", "-i", "sine=duration=4", "-i",
+                                             m_dir.filePath("cover.png"), "-map", "0:a", "-map", "1:v", "-c:a",
+                                             "libmp3lame", "-c:v", "mjpeg", "-disposition:v", "attached_pic",
+                                             "-metadata", "title=Low Tide", "-metadata", "artist=The Pines", song}) == 0);
+        auto w = open(m_dir.filePath("song"));
+        QVERIFY(w->window);
+        QVERIFY(QTest::qWaitForWindowExposed(w->window));
+        w->backend->open({song});
+        QTRY_VERIFY_WITH_TIMEOUT(w->backend->playing(), 10000);
+        QTRY_COMPARE(w->backend->title(), QString("Low Tide"));
+        QTRY_COMPARE(w->backend->artist(), QString("The Pines"));
+        QTRY_VERIFY(w->backend->coverArt().startsWith("data:image/jpeg;base64,"));
+        QVERIFY(!w->backend->hasVideo());
+        // The screen is held on only for a picture.
+        QVERIFY(!w->idle->active());
+        shot(w.get(), "7-song");
+        QVERIFY2(w->warnings.isEmpty(), qPrintable(w->warnings.join('\n')));
+        close(w);
+    }
+
+    void aLightThemeKeepsThePictureDark() {
+        const QString state = m_dir.filePath("light");
+        QVERIFY(QDir().mkpath(state + "/theme"));
+        QVERIFY(write(state + "/theme/colors.toml", "accent = \"#1e66f5\"\nbackground = \"#eff1f5\"\n"
+                                                   "foreground = \"#4c4f69\"\nmuted = \"#8c8fa1\"\n"));
+        auto w = open(state);
+        QVERIFY(w->window);
+        QVERIFY(w->theme->light());
+        w->window->resize(960, 540);
+        QVERIFY(QTest::qWaitForWindowExposed(w->window));
+        w->window->requestActivate();
+        QVERIFY(QTest::qWaitForWindowActive(w->window));
+        w->backend->open({m_clip});
+        QTRY_VERIFY_WITH_TIMEOUT(w->backend->playing(), 10000);
+        QCOMPARE(w->window->color(), QColor("black"));
+        QTest::keyClick(w->window, Qt::Key_Up);
+        auto *centerValue = find<QQuickItem>(w.get(), "centerValue");
+        QCOMPARE(centerValue->property("color").value<QColor>(), QColor("#1e66f5"));
+        w->backend->pause();
+        QTRY_VERIFY_WITH_TIMEOUT(w->backend->currentFrame().isValid(), 5000);
+        QTRY_COMPARE(find<QQuickItem>(w.get(), "centerOsd")->opacity(), 1.0);
+        shot(w.get(), "8-light");
         QVERIFY2(w->warnings.isEmpty(), qPrintable(w->warnings.join('\n')));
         close(w);
     }
