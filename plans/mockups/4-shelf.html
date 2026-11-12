@@ -1,0 +1,79 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><link rel="stylesheet" href="shared.css"><script src="shared.js"></script>
+<style>
+  .body { flex: 1; display: flex; min-height: 0; }
+  .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  .stage { flex: 1; }
+  .transport { flex: none; background: var(--bar); border-top: 1px solid var(--line); padding: 16px 18px 12px; position: relative; }
+  .transport .track { margin: 0 4px 14px; }
+  .row { display: flex; align-items: center; gap: 8px; }
+  .shelf { width: 360px; flex: none; background: var(--panel); border-left: 1px solid var(--line); display: flex; flex-direction: column; }
+  .shelf .head { padding: 16px 16px 10px; display: flex; align-items: center; gap: 8px; color: var(--dim); }
+  .item { display: flex; gap: 12px; padding: 10px 16px; align-items: center; }
+  .item.on { background: #222225; box-shadow: inset 3px 0 0 var(--accent); }
+  .item .thumb { width: 112px; height: 63px; flex: none; position: relative; overflow: hidden; outline: 1px solid #2f2f33; }
+  .item .thumb > svg { width: 100%; height: 100%; }
+  .item .thumb .d { position: absolute; right: 4px; bottom: 4px; background: rgba(0,0,0,.75); font: 10.5px "JetBrainsMono Nerd Font", monospace; padding: 1px 4px; }
+  .item .thumb .p { position: absolute; left: 0; bottom: 0; height: 3px; background: var(--accent); }
+  .item .n { font-size: 13px; line-height: 1.35; }
+  .item .m { font-size: 11.5px; color: var(--faint); margin-top: 3px; }
+  .item.done .n { color: var(--dim); }
+  .chapters { border-top: 1px solid var(--line); padding: 12px 16px; }
+  .chapters .c { display: flex; justify-content: space-between; padding: 5px 0; color: #ccc; font-size: 12.5px; }
+  .chapters .c.on { color: var(--accent); }
+</style></head>
+<body><div class="app">
+  <div class="topbar">
+    <div class="title">coast-road.mkv <span class="meta">1920 × 1080 · H.264 · 48:10</span></div>
+    <div class="spacer"></div>
+    <div class="btn"><span data-icon="scissors"></span>Trim in Omacut<span class="key">E</span></div>
+    <div class="btn primary">Copy frame<span class="key">⌃⇧C</span></div>
+    <div class="btn icon"><span data-icon="list"></span></div>
+  </div>
+  <div class="body">
+    <div class="main">
+      <div class="stage">
+        <div class="frame" style="left:0; top:0; width:1080px; height:608px" data-frame="coast"></div>
+        <div class="sub" style="bottom:46px"><span>We kept driving until the road ran out of coast.</span></div>
+      </div>
+      <div class="transport">
+        <div class="track"><div class="buf" style="width:46%"></div><div class="played" style="width:25%"></div><span class="tick" style="left:12%"></span><span class="tick" style="left:31%"></span><span class="tick" style="left:58%"></span><span class="tick" style="left:80%"></span><span class="head" style="left:25%"></span></div>
+        <div class="row">
+          <div class="ctl"><span data-icon="prev" data-size="18"></span></div>
+          <div class="ctl big"><span data-icon="pause" data-size="20"></span></div>
+          <div class="ctl"><span data-icon="next" data-size="18"></span></div>
+          <div class="time" style="margin-left:8px">12:04 <span class="of">/ 48:10</span></div>
+          <div class="spacer"></div>
+          <div class="pill">1.25×</div>
+          <div class="pill"><span data-icon="subs" data-size="14"></span>English</div>
+          <div class="vol" style="margin-left:6px"><span data-icon="volume" data-size="18"></span><span class="bar"><i style="width:70%"></i></span></div>
+          <div class="ctl"><span data-icon="full" data-size="18"></span></div>
+        </div>
+      </div>
+    </div>
+    <div class="shelf">
+      <div class="head"><span data-icon="folder" data-size="15"></span><span class="panel-title">Road trip</span><div class="spacer"></div><span class="chip">N next · P previous</span></div>
+      <div class="item done"><div class="thumb"><div data-frame="city" data-t="1" style="width:100%;height:100%"></div><span class="d">42:31</span><span class="p" style="width:100%"></span></div><div><div class="n">night-drive.mkv</div><div class="m">Watched</div></div></div>
+      <div class="item on"><div class="thumb"><div data-frame="coast" style="width:100%;height:100%"></div><span class="d">48:10</span><span class="p" style="width:25%"></span></div><div><div class="n">coast-road.mkv</div><div class="m">Playing · 12:04</div></div></div>
+      <div class="item"><div class="thumb"><div data-frame="forest" style="width:100%;height:100%"></div><span class="d">51:02</span></div><div><div class="n">the-pines.mkv</div><div class="m">1920 × 1080</div></div></div>
+      <div class="item"><div class="thumb"><div data-frame="desk" style="width:100%;height:100%"></div><span class="d">08:45</span></div><div><div class="n">making-of.mp4</div><div class="m">2560 × 1440</div></div></div>
+      <div class="spacer"></div>
+      <div class="chapters">
+        <div class="panel-title" style="margin-bottom:6px">Chapters</div>
+        <div class="c"><span>Leaving the city</span><span class="mono">00:00</span></div>
+        <div class="c on"><span>The coast road</span><span class="mono">05:47</span></div>
+        <div class="c"><span>The lighthouse</span><span class="mono">14:56</span></div>
+        <div class="c"><span>Low tide</span><span class="mono">27:56</span></div>
+        <div class="c"><span>Last light</span><span class="mono">38:32</span></div>
+      </div>
+    </div>
+  </div>
+  <div class="status">
+    <span>2 of 4 in Road trip</span><span>·</span><span class="accent">resumed at 11:40</span>
+    <div class="spacer"></div>
+    <span>Space plays · ←→ seek · L hides the shelf</span>
+    <span class="help">?</span>
+  </div>
+</div>
+<script>hydrate()</script>
+</body></html>

@@ -1,0 +1,43 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><link rel="stylesheet" href="shared.css"><script src="shared.js"></script>
+<style>
+  .stage { position: absolute; inset: 0; }
+  .top { position: absolute; left: 0; right: 0; top: 0; height: 120px; background: linear-gradient(rgba(0,0,0,.75), transparent); display: flex; align-items: flex-start; padding: 22px 26px; gap: 12px; }
+  .top .title { font-size: 17px; }
+  .bottom { position: absolute; left: 0; right: 0; bottom: 0; height: 200px; background: linear-gradient(transparent, rgba(0,0,0,.85)); }
+  .card { position: absolute; left: 26px; right: 26px; bottom: 22px; }
+  .card .track { margin-bottom: 18px; }
+  .row { display: flex; align-items: center; gap: 10px; }
+</style></head>
+<body><div class="app">
+  <div class="stage">
+    <div class="frame" style="left:0; top:45px; width:1440px; height:810px" data-frame="coast"></div>
+    <div class="sub" style="bottom:150px"><span>We kept driving until the road ran out of coast.</span></div>
+    <div class="top">
+      <div class="title">coast-road.mkv <span class="meta">1920 × 1080 · H.264 · 5.1</span></div>
+      <div class="spacer"></div>
+      <div class="pill">Copy frame <span class="key">⌃⇧C</span></div>
+      <div class="pill">Trim in Omacut <span class="key">E</span></div>
+    </div>
+    <div class="bottom"></div>
+    <div class="card">
+      <div class="preview" style="left:calc(18% - 70px); bottom:72px"><div class="pic" data-frame="coast" data-t="-1"></div><div class="at">08:40 · The coast road</div></div>
+      <div class="track"><div class="buf" style="width:46%"></div><div class="played" style="width:25%"></div><span class="tick" style="left:12%"></span><span class="tick" style="left:31%"></span><span class="tick" style="left:58%"></span><span class="tick" style="left:80%"></span><span class="head" style="left:25%"></span></div>
+      <div class="row">
+        <div class="ctl big"><span data-icon="pause" data-size="20"></span></div>
+        <div class="ctl"><span data-icon="back" data-size="18"></span></div>
+        <div class="ctl"><span data-icon="fwd" data-size="18"></span></div>
+        <div class="vol" style="margin:0 10px"><span data-icon="volume" data-size="18"></span><span class="bar"><i style="width:70%"></i></span></div>
+        <div class="time">12:04 <span class="of">/ 48:10</span></div>
+        <div class="spacer"></div>
+        <div class="pill">1.25× <span class="key">[ ]</span></div>
+        <div class="pill"><span data-icon="subs" data-size="14"></span>English <span class="key">C</span></div>
+        <div class="pill"><span data-icon="audio" data-size="14"></span>English 5.1 <span class="key">A</span></div>
+        <div class="ctl"><span data-icon="full" data-size="18"></span></div>
+        <span class="help">?</span>
+      </div>
+    </div>
+  </div>
+</div>
+<script>hydrate()</script>
+</body></html>

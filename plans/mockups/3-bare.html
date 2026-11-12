@@ -1,0 +1,25 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><link rel="stylesheet" href="shared.css"><script src="shared.js"></script>
+<style>
+  .stage { position: absolute; inset: 0; }
+  .osd { position: absolute; left: 24px; top: 22px; background: rgba(14,14,16,.82); padding: 10px 14px; display: flex; align-items: center; gap: 12px; }
+  .osd .name { color: var(--dim); font-size: 12.5px; }
+  .toast { position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%); background: rgba(14,14,16,.82); padding: 16px 26px; display: flex; flex-direction: column; align-items: center; gap: 10px; }
+  .toast .v { font: 600 30px "JetBrainsMono Nerd Font", monospace; color: var(--accent); }
+  .toast .k { font-size: 12px; color: var(--dim); }
+  .edge { position: absolute; left: 0; right: 0; bottom: 0; height: 4px; background: rgba(255,255,255,.12); }
+  .edge i { position: absolute; left: 0; top: 0; bottom: 0; width: 25%; background: var(--accent); }
+  .hint { position: absolute; right: 22px; bottom: 18px; font-size: 12px; color: rgba(255,255,255,.45); display: flex; align-items: center; }
+</style></head>
+<body><div class="app">
+  <div class="stage">
+    <div class="frame" style="left:0; top:45px; width:1440px; height:810px" data-frame="coast"></div>
+    <div class="sub" style="bottom:90px"><span>We kept driving until the road ran out of coast.</span></div>
+    <div class="osd"><span data-icon="play" data-size="14" data-color="#FFD60A"></span><span class="time">12:04 <span class="of">/ 48:10</span></span><span class="name">coast-road.mkv</span></div>
+    <div class="toast"><span class="v">1.25×</span><span class="k">Speed · [ slower · ] faster · Backspace resets</span></div>
+    <div class="hint">nothing else on screen until you press a key<span class="help">?</span></div>
+    <div class="edge"><i></i></div>
+  </div>
+</div>
+<script>hydrate()</script>
+</body></html>
