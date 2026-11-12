@@ -120,6 +120,14 @@ Backend::Backend(const Options &options, QObject *parent)
     m_previewTimer.setSingleShot(true);
     m_previewTimer.setInterval(m_options.previewDelayMs);
     connect(&m_previewTimer, &QTimer::timeout, this, &Backend::startPreviews);
+    // The player tells what it knows about a file in its own order, so the
+    // previews start when the last of what they need arrives.
+    for (auto signal : {&Backend::seekableChanged, &Backend::hasVideoChanged, &Backend::durationChanged,
+                        &Backend::videoSizeChanged, &Backend::infoChanged})
+        connect(this, signal, this, [this] {
+            if (m_previewsWanted && !m_previewTimer.isActive())
+                m_previewTimer.start();
+        });
     connect(&m_previews, &frames::Previews::ready, this,
             [this](const QString &path, const frames::PreviewLayout &layout) {
                 m_previewSource = QUrl::fromLocalFile(path);
@@ -222,13 +230,19 @@ void Backend::ensurePlayer() {
             {
                 QMutexLocker locker(&m_frameLock);
                 m_frame = frame;
+                if (frame.size() != m_frameSize)
+                    size = m_frameSize = frame.size();
+            }
+            // Its own lock, never held with the frame's: the window's sink
+            // may wait on the GUI thread, which takes the frame's lock to
+            // read the frame on screen.
+            {
+                QMutexLocker locker(&m_outputLock);
                 if (m_output) {
                     if (m_sink->rhi() != m_output->rhi())
                         m_sink->setRhi(m_output->rhi());
                     m_output->setVideoFrame(frame);
                 }
-                if (frame.size() != m_frameSize)
-                    size = m_frameSize = frame.size();
             }
             if (size.isValid())
                 QMetaObject::invokeMethod(this, [this, size] {
@@ -279,20 +293,22 @@ void Backend::ensurePlayer() {
 }
 
 void Backend::setVideoSink(QVideoSink *sink) {
-    QMutexLocker locker(&m_frameLock);
+    const QVideoFrame frame = currentFrame();
+    QMutexLocker locker(&m_outputLock);
     if (m_output)
         disconnect(m_output, &QObject::destroyed, this, nullptr);
     m_output = sink;
     if (!m_output)
         return;
-    // The window's VideoOutput goes before the backend does; the decoder
-    // thread must never hand a frame to it after that.
+    // The decoder's thread must never hand a frame to a VideoOutput that has
+    // gone; close() stops the player before the window goes, and this covers
+    // a window that goes first anyway.
     connect(m_output, &QObject::destroyed, this, [this] {
-        QMutexLocker locker(&m_frameLock);
+        QMutexLocker locker(&m_outputLock);
         m_output = nullptr;
     }, Qt::DirectConnection);
-    if (m_frame.isValid())
-        m_output->setVideoFrame(m_frame);
+    if (frame.isValid())
+        m_output->setVideoFrame(frame);
 }
 
 void Backend::open(const QStringList &arguments) {
@@ -332,6 +348,7 @@ void Backend::load(int index) {
     ensurePlayer();
     m_previews.cancel();
     m_previewTimer.stop();
+    m_previewsWanted = false;
     ++m_generation;
     m_index = index;
     const QString item = m_playlist.at(index);
@@ -350,6 +367,9 @@ void Backend::load(int index) {
         QMutexLocker locker(&m_frameLock);
         m_frame = QVideoFrame();
         m_frameSize = QSize();
+    }
+    {
+        QMutexLocker locker(&m_outputLock);
         if (m_output)
             m_output->setVideoFrame(QVideoFrame());
     }
@@ -445,7 +465,8 @@ void Backend::onStatus() {
                 emit resumedAtChanged();
             }
             m_pendingResume = -1;
-            if (m_options.previews && m_source.isLocalFile())
+            m_previewsWanted = m_options.previews && m_source.isLocalFile();
+            if (m_previewsWanted)
                 m_previewTimer.start();
         }
     } else if (status == QMediaPlayer::EndOfMedia) {
@@ -1056,10 +1077,13 @@ void Backend::close() {
 }
 
 void Backend::startPreviews() {
-    if (!m_source.isLocalFile() || !m_seekable || !m_hasVideo || m_duration <= 0)
+    if (!m_previewsWanted || !m_source.isLocalFile() || !m_seekable || !m_hasVideo || m_duration <= 0)
         return;
     QSize size = m_videoSize;
     if (const probe::Stream *video = m_probe.video(); size.isEmpty() && video)
         size = QSize(video->width, video->height);
+    if (size.isEmpty())
+        return;
+    m_previewsWanted = false;
     m_previews.start(m_source.toLocalFile(), m_duration / 1000.0, size);
 }

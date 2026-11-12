@@ -169,9 +169,16 @@ QString languageName(const QString &code) {
     const QLocale::Language language = QLocale::codeToLanguage(two);
     if (language == QLocale::AnyLanguage || language == QLocale::C)
         return {};
-    // In the reader's language, which the Translator made the default locale.
-    const QString name = QLocale().languageToString(language);
-    return name.isEmpty() ? QLocale::languageToString(language) : name;
+    // In its own words ("Dansk", "Deutsch"), which is how a speaker of it
+    // finds it in a list; Qt can't name one language in another's words.
+    // English alone names its default region ("American English"), which a
+    // track tagged only "eng" doesn't claim.
+    QString name = language == QLocale::English ? QStringLiteral("English") : QLocale(language).nativeLanguageName();
+    if (name.isEmpty())
+        name = QLocale::languageToString(language);
+    if (!name.isEmpty())
+        name[0] = name[0].toUpper();
+    return name;
 }
 
 QJsonObject Info::toJson() const {

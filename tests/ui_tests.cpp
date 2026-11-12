@@ -140,7 +140,7 @@ class UiTests : public QObject {
         QImage frame = w->backend->currentFrame().isValid() ? QVideoFrame(w->backend->currentFrame()).toImage() : QImage();
         if (video && !frame.isNull() && w->backend->hasVideo()) {
             const QRectF picture = video->property("contentRect").toRectF();
-            const qreal ratio = ui.devicePixelRatio();
+            const qreal ratio = qreal(ui.width()) / w->window->width();
             painter.drawImage(QRectF(picture.topLeft() * ratio, picture.size() * ratio), frame);
         }
         painter.drawImage(0, 0, ui);
@@ -159,6 +159,11 @@ private slots:
         // So a screenshot's window can be grabbed with a clear background.
         QQuickWindow::setDefaultAlphaBuffer(true);
         QVERIFY(m_dir.isValid());
+        // Caches and state go to a temp home, and nothing here may reach the
+        // desktop's clipboard.
+        qputenv("XDG_CACHE_HOME", m_dir.filePath("cache").toUtf8());
+        qputenv("XDG_STATE_HOME", m_dir.filePath("state").toUtf8());
+        qunsetenv("WAYLAND_DISPLAY");
         QVERIFY(makeClip(m_dir.path(), "a-coast.mkv", 8));
         QVERIFY(makeClip(m_dir.path(), "b-pines.mkv", 3));
         m_clip = m_dir.filePath("a-coast.mkv");
@@ -194,6 +199,9 @@ private slots:
         QCOMPARE(w->backend->playlistCount(), 2);
         QTRY_COMPARE(w->backend->chapters().size(), 2);
         QTRY_COMPARE(w->backend->audioLabel(), QString("English · stereo"));
+        // The scrub previews follow, once the player knows enough about the file.
+        QTRY_VERIFY_WITH_TIMEOUT(w->backend->previewCount() > 0, 30000);
+        QVERIFY(w->backend->previewSource().toLocalFile().startsWith(m_dir.filePath("cache")));
         // English everywhere, so subtitles start off.
         QCOMPARE(w->backend->subtitleChoices(), 1);
         QCOMPARE(w->backend->subtitleLabel(), QString());

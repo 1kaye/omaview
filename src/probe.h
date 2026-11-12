@@ -60,8 +60,8 @@ Info run(const QString &path, int timeoutMs = 15000);
 // Parses ffprobe's -print_format json output; separate so tests can feed it.
 Info parse(const QByteArray &json, const QString &path);
 
-// "English", "Dansk", from an ISO 639-2 or 639-1 code, in the given UI
-// language's words where Qt knows them; empty for "und" or unknown codes.
+// "English", "Dansk", "Deutsch", from an ISO 639-2 or 639-1 code, each in
+// its own words; empty for "und" or unknown codes.
 QString languageName(const QString &code);
 // The ISO 639-1 code for a 639-2 one ("eng" -> "en"), or the code itself.
 QString shortLanguage(const QString &code);

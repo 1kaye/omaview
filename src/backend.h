@@ -235,11 +235,13 @@ private:
     QMediaPlayer *m_player = nullptr;
     QAudioOutput *m_audio = nullptr;
     QVideoSink *m_sink = nullptr;              // the player's, which forwards
-    // Shared with the decoder's thread, which hands frames on.
+    // Shared with the decoder's thread, which hands frames on. The two locks
+    // are never held together.
     mutable QMutex m_frameLock;
-    QVideoSink *m_output = nullptr;  // the window's
     QVideoFrame m_frame;
     QSize m_frameSize;
+    QMutex m_outputLock;
+    QVideoSink *m_output = nullptr;  // the window's
     QImage m_pendingFrame;  // latched by Save frame while the dialog is up
 
     QStringList m_playlist;
@@ -286,6 +288,7 @@ private:
 
     frames::Previews m_previews;
     QTimer m_previewTimer;
+    bool m_previewsWanted = false;
     QUrl m_previewSource;
     frames::PreviewLayout m_previewLayout;
 };
