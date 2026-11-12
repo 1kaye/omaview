@@ -1,0 +1,284 @@
+#pragma once
+
+#include <QImage>
+#include <QObject>
+#include <QPointer>
+#include <QSize>
+#include <QStringList>
+#include <QTimer>
+#include <QUrl>
+#include <QVariantList>
+#include <QVideoFrame>
+#include <memory>
+
+#include "frames.h"
+#include "positions.h"
+#include "probe.h"
+#include "subtitles.h"
+
+class FilePicker;
+class QAudioOutput;
+class QMediaPlayer;
+class QVideoSink;
+
+// What the window talks to. It owns the player, created with the first file
+// so a window with nothing to play never starts Qt Multimedia's FFmpeg
+// backend, and everything that is a decision or touches the disk: the
+// playlist, track choice, resume positions, subtitles beside the file, the
+// scrub previews, and frames out.
+class Backend : public QObject {
+    Q_OBJECT
+    Q_PROPERTY(bool playerReady READ playerReady NOTIFY playerReadyChanged)
+    Q_PROPERTY(bool hasMedia READ hasMedia NOTIFY mediaChanged)
+    Q_PROPERTY(QString fileName READ fileName NOTIFY mediaChanged)
+    Q_PROPERTY(QString title READ title NOTIFY metadataChanged)
+    Q_PROPERTY(QString artist READ artist NOTIFY metadataChanged)
+    Q_PROPERTY(QString coverArt READ coverArt NOTIFY metadataChanged)
+    Q_PROPERTY(QString summary READ summary NOTIFY metadataChanged)
+    Q_PROPERTY(bool playing READ playing NOTIFY playingChanged)
+    Q_PROPERTY(bool loading READ loading NOTIFY statusChanged)
+    Q_PROPERTY(bool buffering READ buffering NOTIFY statusChanged)
+    Q_PROPERTY(bool ended READ ended NOTIFY statusChanged)
+    Q_PROPERTY(qint64 position READ position NOTIFY positionChanged)
+    Q_PROPERTY(qint64 duration READ duration NOTIFY durationChanged)
+    Q_PROPERTY(bool seekable READ seekable NOTIFY seekableChanged)
+    Q_PROPERTY(bool hasVideo READ hasVideo NOTIFY hasVideoChanged)
+    Q_PROPERTY(QSize videoSize READ videoSize NOTIFY videoSizeChanged)
+    Q_PROPERTY(double volume READ volume NOTIFY volumeChanged)
+    Q_PROPERTY(bool muted READ muted NOTIFY volumeChanged)
+    Q_PROPERTY(double rate READ rate NOTIFY rateChanged)
+    Q_PROPERTY(QString error READ error NOTIFY errorChanged)
+    Q_PROPERTY(QString subtitleText READ subtitleText NOTIFY subtitleTextChanged)
+    Q_PROPERTY(QString subtitleLabel READ subtitleLabel NOTIFY tracksChanged)
+    Q_PROPERTY(int subtitleChoices READ subtitleChoices NOTIFY tracksChanged)
+    Q_PROPERTY(QString audioLabel READ audioLabel NOTIFY tracksChanged)
+    Q_PROPERTY(int audioTracks READ audioTracks NOTIFY tracksChanged)
+    Q_PROPERTY(QVariantList chapters READ chapters NOTIFY infoChanged)
+    Q_PROPERTY(QString chapterTitle READ chapterTitle NOTIFY chapterChanged)
+    Q_PROPERTY(QVariantList info READ info NOTIFY infoChanged)
+    Q_PROPERTY(qint64 resumedAt READ resumedAt NOTIFY resumedAtChanged)
+    Q_PROPERTY(int playlistIndex READ playlistIndex NOTIFY playlistChanged)
+    Q_PROPERTY(int playlistCount READ playlistCount NOTIFY playlistChanged)
+    Q_PROPERTY(QString nextName READ nextName NOTIFY playlistChanged)
+    Q_PROPERTY(bool canTrim READ canTrim CONSTANT)
+    Q_PROPERTY(QUrl previewSource READ previewSource NOTIFY previewsChanged)
+    Q_PROPERTY(int previewCount READ previewCount NOTIFY previewsChanged)
+    Q_PROPERTY(int previewColumns READ previewColumns NOTIFY previewsChanged)
+    Q_PROPERTY(QSize previewTileSize READ previewTileSize NOTIFY previewsChanged)
+    Q_PROPERTY(double previewInterval READ previewInterval NOTIFY previewsChanged)
+
+public:
+    struct Options {
+        QString positionsPath;        // tests pass a temp file
+        bool audio = true;            // tests play without an audio device
+        FilePicker *picker = nullptr; // tests answer the dialogs; null is the portal
+        bool previews = true;
+        int previewDelayMs = 3000;
+    };
+
+    explicit Backend(QObject *parent = nullptr);
+    Backend(const Options &options, QObject *parent = nullptr);
+    ~Backend() override;
+
+    bool playerReady() const { return m_player != nullptr; }
+    bool hasMedia() const { return !m_source.isEmpty(); }
+    QString fileName() const;
+    QString filePath() const { return m_source.isLocalFile() ? m_source.toLocalFile() : QString(); }
+    QUrl source() const { return m_source; }
+    QString title() const;
+    QString artist() const { return m_artist; }
+    QString coverArt() const { return m_coverArt; }
+    QString summary() const { return m_summary; }
+    bool playing() const;
+    bool loading() const;
+    bool buffering() const;
+    bool ended() const { return m_ended; }
+    qint64 position() const { return m_position; }
+    qint64 duration() const { return m_duration; }
+    bool seekable() const { return m_seekable; }
+    bool hasVideo() const { return m_hasVideo; }
+    QSize videoSize() const { return m_videoSize; }
+    double volume() const { return m_volume; }
+    bool muted() const { return m_muted; }
+    double rate() const { return m_rate; }
+    QString error() const { return m_error; }
+    QString subtitleText() const { return m_subtitleText; }
+    QString subtitleLabel() const;
+    int subtitleChoices() const { return int(m_subtitleChoices.size()); }
+    QString audioLabel() const;
+    int audioTracks() const { return int(m_audioLabels.size()); }
+    QVariantList chapters() const { return m_chapters; }
+    QString chapterTitle() const { return m_chapterTitle; }
+    QVariantList info() const { return m_info; }
+    qint64 resumedAt() const { return m_resumedAt; }
+    int playlistIndex() const { return m_index; }
+    int playlistCount() const { return int(m_playlist.size()); }
+    QString nextName() const;
+    bool canTrim() const;
+    QUrl previewSource() const { return m_previewSource; }
+    int previewCount() const { return m_previewLayout.count; }
+    int previewColumns() const { return m_previewLayout.columns; }
+    QSize previewTileSize() const { return m_previewLayout.tileSize; }
+    double previewInterval() const { return m_previewLayout.interval; }
+    QStringList playlist() const { return m_playlist; }
+    QMediaPlayer *player() const { return m_player; }
+    Positions &positions() { return m_positions; }
+
+    // The Omarchy language, for choosing audio and subtitle tracks.
+    void setLanguage(const QString &language);
+
+    // Paths or URLs as a command line gives them: several are the playlist,
+    // one local file brings its folder.
+    Q_INVOKABLE void open(const QStringList &arguments);
+    Q_INVOKABLE void openUrls(const QList<QUrl> &urls);
+    Q_INVOKABLE void openDialog();
+    Q_INVOKABLE void togglePlay();
+    Q_INVOKABLE void play();
+    Q_INVOKABLE void pause();
+    Q_INVOKABLE void stop();
+    Q_INVOKABLE void seek(qint64 ms);
+    Q_INVOKABLE void seekBy(qint64 ms);
+    Q_INVOKABLE void seekFraction(double fraction);
+    Q_INVOKABLE void startOver();
+    Q_INVOKABLE void stepFrame(int direction);
+    Q_INVOKABLE void changeRate(double delta);
+    Q_INVOKABLE void resetRate();
+    Q_INVOKABLE void setVolume(double volume);
+    Q_INVOKABLE void changeVolume(double delta);
+    Q_INVOKABLE void toggleMute();
+    Q_INVOKABLE void cycleSubtitles();
+    Q_INVOKABLE void cycleAudio();
+    Q_INVOKABLE bool next();
+    Q_INVOKABLE bool previous();
+    Q_INVOKABLE void jumpChapter(int direction);
+    Q_INVOKABLE QString chapterAt(qint64 ms) const;
+    Q_INVOKABLE void copyFrame();
+    Q_INVOKABLE void saveFrame();
+    Q_INVOKABLE void trimInOmacut();
+    // True once, the first time any file is opened, for the "Press Tab" hint.
+    Q_INVOKABLE bool takeFirstRunHint();
+    // The window's VideoOutput, once its Loader has made it.
+    Q_INVOKABLE void setVideoSink(QVideoSink *sink);
+    // Remembers where the open file was left; the window calls it on close.
+    Q_INVOKABLE void close();
+
+    // The frame on screen now, latched for Copy and Save.
+    QVideoFrame currentFrame() const { return m_frame; }
+
+signals:
+    void playerReadyChanged();
+    void mediaChanged();
+    void metadataChanged();
+    void playingChanged();
+    void statusChanged();
+    void positionChanged();
+    void durationChanged();
+    void seekableChanged();
+    void hasVideoChanged();
+    void videoSizeChanged();
+    void volumeChanged();
+    void rateChanged();
+    void errorChanged();
+    void subtitleTextChanged();
+    void tracksChanged();
+    void chapterChanged();
+    void infoChanged();
+    void resumedAtChanged();
+    void playlistChanged();
+    void previewsChanged();
+    // A short message for the on-screen display: what an action did.
+    void notice(const QString &text);
+    // Media keys and the bar asked for the window to come forward.
+    void raiseRequested();
+    // MPRIS: a seek the player did on its own terms.
+    void seeked(qint64 ms);
+
+private:
+    struct SubtitleChoice {
+        int embedded = -1;  // Qt's subtitle track index
+        int sidecar = -1;   // index into m_sidecars
+        QString label;
+        QString language;   // two-letter where known
+        QList<subtitles::Cue> cues;
+        bool cuesLoaded = false;
+    };
+
+    void ensurePlayer();
+    void load(int index);
+    void rememberPosition();
+    void setError(const QString &error);
+    void setPosition(qint64 ms);
+    void onStatus();
+    void onTracks();
+    void onProbed(const probe::Info &info, quint64 generation);
+    void chooseTracks();
+    void applySubtitle(int choice, bool remember);
+    void applyAudio(int track, bool remember);
+    void loadCues(int choice);
+    void updateSubtitleText();
+    void updateChapter();
+    void updateMetadata();
+    void buildInfo();
+    void applyVolume();
+    void startPreviews();
+
+    Options m_options;
+    std::unique_ptr<FilePicker> m_ownPicker;
+    FilePicker *m_picker = nullptr;
+    Positions m_positions;
+    QString m_language = "en";
+
+    QMediaPlayer *m_player = nullptr;
+    QAudioOutput *m_audio = nullptr;
+    QVideoSink *m_sink = nullptr;              // the player's, which forwards
+    QPointer<QVideoSink> m_outputSink;         // the window's
+    QVideoFrame m_frame;
+    QImage m_pendingFrame;  // latched by Save frame while the dialog is up
+
+    QStringList m_playlist;
+    int m_index = -1;
+    QUrl m_source;
+    quint64 m_generation = 0;  // which file async work belongs to
+
+    QString m_title;
+    QString m_artist;
+    QString m_coverArt;
+    QString m_summary;
+    QString m_error;
+    qint64 m_position = 0;
+    qint64 m_duration = 0;
+    bool m_seekable = false;
+    bool m_hasVideo = false;
+    bool m_ended = false;
+    bool m_loaded = false;
+    QSize m_videoSize;
+    double m_volume = 1.0;  // perceptual, 0 to 1
+    bool m_muted = false;
+    double m_rate = 1.0;
+
+    probe::Info m_probe;
+    bool m_probed = false;
+    bool m_tracksReady = false;
+    bool m_tracksChosen = false;
+    qint64 m_pendingResume = -1;
+    qint64 m_resumedAt = -1;
+
+    QList<subtitles::Sidecar> m_sidecars;
+    QList<SubtitleChoice> m_subtitleChoices;
+    int m_subtitleChoice = -1;
+    QList<subtitles::Cue> m_cues;
+    QString m_embeddedText;
+    QString m_subtitleText;
+    QStringList m_audioLabels;
+    QStringList m_audioLanguages;
+    int m_audioTrack = -1;
+
+    QVariantList m_chapters;
+    QString m_chapterTitle;
+    QVariantList m_info;
+
+    frames::Previews m_previews;
+    QTimer m_previewTimer;
+    QUrl m_previewSource;
+    frames::PreviewLayout m_previewLayout;
+};

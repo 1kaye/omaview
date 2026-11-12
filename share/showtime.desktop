@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Showtime
+GenericName=Media Player
+Comment=Watch videos and listen to music
+Exec=showtime open %F
+Icon=showtime
+Terminal=false
+Categories=AudioVideo;Video;Player;
+MimeType=video/mp4;video/x-matroska;video/webm;video/quicktime;video/x-msvideo;video/mpeg;video/ogg;video/x-flv;video/x-ms-wmv;video/3gpp;video/3gpp2;video/x-ms-asf;video/x-ogm+ogg;video/x-theora+ogg;video/mp2t;video/x-m4v;application/ogg;audio/mpeg;audio/flac;audio/ogg;audio/x-wav;audio/wav;audio/mp4;audio/aac;audio/opus;audio/x-vorbis+ogg;audio/x-matroska;
+Keywords=video;movie;film;music;audio;player;watch;
+StartupWMClass=showtime

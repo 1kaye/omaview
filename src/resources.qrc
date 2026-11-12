@@ -1,0 +1,13 @@
+<RCC>
+    <qresource prefix="/">
+        <file alias="Main.qml">Main.qml</file>
+        <file alias="ControlsOverlay.qml">ControlsOverlay.qml</file>
+        <file alias="ControlButton.qml">ControlButton.qml</file>
+        <file alias="Timeline.qml">Timeline.qml</file>
+        <file alias="Icon.qml">Icon.qml</file>
+        <file alias="Format.js">Format.js</file>
+        <file alias="skill.md">skill.md</file>
+        <file alias="showtime.svg">../share/showtime.svg</file>
+        <file alias="i18n/en.json">i18n/en.json</file>
+    </qresource>
+</RCC>
