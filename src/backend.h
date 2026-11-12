@@ -56,6 +56,7 @@ class Backend : public QObject {
     Q_PROPERTY(bool muted READ muted NOTIFY volumeChanged)
     Q_PROPERTY(double rate READ rate NOTIFY rateChanged)
     Q_PROPERTY(QString error READ error NOTIFY errorChanged)
+    Q_PROPERTY(bool stopped READ stopped NOTIFY playingChanged)
     Q_PROPERTY(QString subtitleText READ subtitleText NOTIFY subtitleTextChanged)
     Q_PROPERTY(QString subtitleLabel READ subtitleLabel NOTIFY tracksChanged)
     Q_PROPERTY(int subtitleChoices READ subtitleChoices NOTIFY tracksChanged)
@@ -109,7 +110,9 @@ public:
     double volume() const { return m_volume; }
     bool muted() const { return m_muted; }
     double rate() const { return m_rate; }
-    QString error() const { return m_error; }
+    // Translated when read, so a language switch re-renders it.
+    QString error() const;
+    bool stopped() const { return m_stopped; }
     QString subtitleText() const { return m_subtitleText; }
     QString subtitleLabel() const;
     int subtitleChoices() const { return int(m_subtitleChoices.size()); }
@@ -227,7 +230,10 @@ private:
     void ensurePlayer();
     void load(int index);
     void rememberPosition();
-    void setError(const QString &error);
+    enum class Problem { None, Missing, Unreadable, Unplayable, Format, Network, Access };
+    void setError(Problem problem);
+    void labelTracks();
+    void emitFileChanged();
     void setPosition(qint64 ms);
     void onStatus();
     void onTracks();
@@ -282,7 +288,8 @@ private:
     QString m_artist;
     QString m_coverArt;
     QString m_summary;
-    QString m_error;
+    Problem m_problem = Problem::None;
+    bool m_stopped = false;  // MPRIS Stop: back at the start, not merely paused
     qint64 m_position = 0;
     qint64 m_duration = 0;
     bool m_seekable = false;

@@ -94,15 +94,21 @@ ApplicationWindow {
     }
 
     // The window opens at the video's shape, as large as fits in 80% of the
-    // screen, and never larger than the video itself.
-    function sizeToVideo() {
-        if (sized || fullscreen || !backend.hasVideo || backend.videoSize.width <= 0)
+    // screen, and never larger than the video itself; a song gets a small
+    // square for its cover.
+    function sizeToMedia() {
+        if (sized || fullscreen || !backend.hasMedia || backend.error !== "")
             return
-        sized = true
-        const maxWidth = Screen.desktopAvailableWidth * 0.8, maxHeight = Screen.desktopAvailableHeight * 0.8
-        const scale = Math.min(1, maxWidth / backend.videoSize.width, maxHeight / backend.videoSize.height)
-        width = Math.max(minimumWidth, Math.round(backend.videoSize.width * scale))
-        height = Math.max(minimumHeight, Math.round(backend.videoSize.height * scale))
+        if (backend.hasVideo && backend.videoSize.width > 0) {
+            sized = true
+            const maxWidth = Screen.desktopAvailableWidth * 0.8, maxHeight = Screen.desktopAvailableHeight * 0.8
+            const scale = Math.min(1, maxWidth / backend.videoSize.width, maxHeight / backend.videoSize.height)
+            width = Math.max(minimumWidth, Math.round(backend.videoSize.width * scale))
+            height = Math.max(minimumHeight, Math.round(backend.videoSize.height * scale))
+        } else if (!backend.hasVideo && !backend.loading && backend.duration > 0) {
+            sized = true
+            width = height = Math.max(minimumHeight, Math.min(520, Screen.desktopAvailableHeight * 0.6))
+        }
     }
 
     // The screen stays on while a video plays, and only then.
@@ -114,7 +120,19 @@ ApplicationWindow {
 
     Connections {
         target: backend
-        function onVideoSizeChanged() { win.sizeToVideo() }
+        function onVideoSizeChanged() { win.sizeToMedia() }
+        function onDurationChanged() { win.sizeToMedia() }
+        // Loading and a stalled stream keep the corner up, saying so, rather
+        // than leaving a frozen picture without a word.
+        function onStatusChanged() {
+            win.sizeToMedia()
+            if (backend.loading || backend.buffering) {
+                cornerOsd.shown = true
+                cornerTimer.stop()
+            } else if (cornerOsd.shown) {
+                cornerTimer.restart()
+            }
+        }
         function onPictureCleared() {
             if (videoLoader.item)
                 videoLoader.item.clearOutput()
@@ -125,6 +143,8 @@ ApplicationWindow {
                 win.say(qsTr("Resumed at %1").arg(Format.clock(backend.resumedAt)), qsTr("Home starts over"))
         }
         function onMediaChanged() {
+            // Every file opens bare.
+            win.overlayShown = false
             win.poke()
             if (backend.takeFirstRunHint())
                 win.say(qsTr("Press Tab for controls"), qsTr("? shows every key"))
@@ -454,6 +474,8 @@ ApplicationWindow {
                 anchors.rightMargin: expanded ? 16 : 0
                 anchors.bottomMargin: expanded ? 6 : 0
                 expanded: edgeHover.hovered || seekTimer.running
+                // A key seek shows where it landed, without the pointer.
+                labelAtPlayhead: seekTimer.running && !edgeHover.hovered
             }
         }
         Timer { id: seekTimer; interval: 2000 }
@@ -502,7 +524,11 @@ ApplicationWindow {
                 }
             }
         }
-        Timer { id: cornerTimer; interval: 2000; onTriggered: cornerOsd.shown = backend.hasMedia && !backend.playing }
+        Timer {
+            id: cornerTimer
+            interval: 2000
+            onTriggered: cornerOsd.shown = backend.hasMedia && (!backend.playing || backend.buffering || backend.loading)
+        }
 
         // The middle: what just changed.
         Rectangle {
@@ -577,6 +603,10 @@ ApplicationWindow {
         modal: true
         focus: true
         padding: 20
+        // A modal popup holds the window's keys, so its own keys close it and
+        // quit while it is open.
+        Shortcut { sequence: "I"; enabled: infoCard.opened; onActivated: infoCard.close() }
+        Shortcut { sequences: ["Q", "Ctrl+Q"]; enabled: infoCard.opened; onActivated: win.close() }
         background: Rectangle {
             color: Qt.rgba(theme.background.r, theme.background.g, theme.background.b, 0.95)
             border.color: theme.colors.selection
@@ -652,6 +682,8 @@ ApplicationWindow {
         modal: true
         focus: true
         padding: 24
+        Shortcut { sequences: ["?", "F1"]; enabled: help.opened; onActivated: help.close() }
+        Shortcut { sequences: ["Q", "Ctrl+Q"]; enabled: help.opened; onActivated: win.close() }
         background: Rectangle {
             color: Qt.rgba(theme.background.r, theme.background.g, theme.background.b, 0.95)
             border.color: theme.colors.selection

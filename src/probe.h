@@ -38,6 +38,7 @@ struct Chapter {
 
 struct Info {
     QString error;  // empty when the probe worked
+    bool missingTool = false;  // ffprobe isn't installed
     QString path;
     QString format;      // format_long_name
     QString title;       // the container's title tag

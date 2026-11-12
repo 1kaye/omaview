@@ -252,6 +252,11 @@ private slots:
         QTest::keyClick(w->window, Qt::Key_Period);
         QVERIFY(w->backend->position() > before);
         QVERIFY2(w->backend->position() - before <= 60, qPrintable(QString::number(w->backend->position() - before)));
+        QTRY_VERIFY_WITH_TIMEOUT(w->backend->currentFrame().startTime() / 1000 >= before, 5000);
+        const qint64 stepped = w->backend->position();
+        QTest::keyClick(w->window, Qt::Key_Comma);
+        QVERIFY(w->backend->position() < stepped);
+        QVERIFY(stepped - w->backend->position() <= 60);
 
         // Tab brings the overlay in, and Esc puts it away.
         auto *overlay = find<QQuickItem>(w.get(), "overlay");
@@ -270,11 +275,20 @@ private slots:
         shot(w.get(), "3-info");
         QTest::keyClick(w->window, Qt::Key_Escape);
         QTRY_VERIFY(!info->property("visible").toBool());
+        // The key that opens a card closes it too, though the card holds the keys.
+        QTest::keyClick(w->window, Qt::Key_I);
+        QTRY_VERIFY(info->property("opened").toBool());
+        QTest::keyClick(w->window, Qt::Key_I);
+        QTRY_VERIFY(!info->property("visible").toBool());
         auto *help = w->window->findChild<QObject *>("help");
         QTest::keyClick(w->window, '?');
         QTRY_VERIFY(help->property("opened").toBool());
         shot(w.get(), "4-help");
         QTest::keyClick(w->window, Qt::Key_Escape);
+        QTRY_VERIFY(!help->property("visible").toBool());
+        QTest::keyClick(w->window, '?');
+        QTRY_VERIFY(help->property("opened").toBool());
+        QTest::keyClick(w->window, '?');
         QTRY_VERIFY(!help->property("visible").toBool());
 
         // Save frame asks the picker, suggesting a name with the time.
@@ -305,6 +319,14 @@ private slots:
         QTest::keyClick(w->window, Qt::Key_Return);
         QTRY_COMPARE(w->backend->fileName(), QString("b-pines.mkv"));
         QTRY_VERIFY_WITH_TIMEOUT(w->backend->playing(), 10000);
+        // A second video is still a video: the picture, not the song view,
+        // and the screen held on while it plays and only then.
+        QTRY_VERIFY(w->backend->currentFrame().isValid());
+        QVERIFY(w->backend->hasVideo());
+        QVERIFY(w->idle->active());
+        w->backend->pause();
+        QVERIFY(!w->idle->active());
+        w->backend->play();
         QCOMPARE(w->backend->nextName(), QString());
         QTest::keyClick(w->window, Qt::Key_N);
         QTRY_VERIFY(find<QQuickItem>(w.get(), "centerValue")->property("text").toString().contains("last"));
@@ -329,8 +351,9 @@ private slots:
         QTRY_COMPARE(w->backend->artist(), QString("The Pines"));
         QTRY_VERIFY(w->backend->coverArt().startsWith("data:image/jpeg;base64,"));
         QVERIFY(!w->backend->hasVideo());
-        // The screen is held on only for a picture.
+        // The screen is held on only for a picture, and a song gets a square.
         QVERIFY(!w->idle->active());
+        QTRY_COMPARE(w->window->width(), w->window->height());
         shot(w.get(), "7-song");
         QVERIFY2(w->warnings.isEmpty(), qPrintable(w->warnings.join('\n')));
         close(w);

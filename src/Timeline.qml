@@ -7,6 +7,8 @@ import "Format.js" as Format
 Item {
     id: timeline
     property bool expanded: false
+    // Show the time and chapter at the playhead, as after a key seek.
+    property bool labelAtPlayhead: false
     property bool hovering: hover.hovered
     readonly property bool usable: backend.seekable && backend.duration > 0
     readonly property real fraction: backend.duration > 0 ? Math.min(1, backend.position / backend.duration) : 0
@@ -57,8 +59,10 @@ Item {
     // The preview: a tile from the atlas, the time, and the chapter there.
     Column {
         id: preview
-        visible: timeline.usable && (timeline.hoverFraction >= 0 || timeline.dragFraction >= 0) && timeline.expanded
-        readonly property real at: timeline.dragFraction >= 0 ? timeline.dragFraction : timeline.hoverFraction
+        readonly property bool pointing: timeline.hoverFraction >= 0 || timeline.dragFraction >= 0
+        visible: timeline.usable && timeline.expanded && (pointing || timeline.labelAtPlayhead)
+        readonly property real at: timeline.dragFraction >= 0 ? timeline.dragFraction
+                                   : timeline.hoverFraction >= 0 ? timeline.hoverFraction : timeline.fraction
         readonly property int tile: backend.previewCount > 0
                                     ? Math.min(backend.previewCount - 1, Math.floor(at * backend.duration / 1000 / backend.previewInterval))
                                     : -1
@@ -69,7 +73,8 @@ Item {
 
         Item {
             anchors.horizontalCenter: parent.horizontalCenter
-            visible: preview.tile >= 0
+            // The picture itself shows where a key seek landed.
+            visible: preview.tile >= 0 && preview.pointing
             width: backend.previewTileSize.width
             height: backend.previewTileSize.height
             clip: true

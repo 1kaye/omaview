@@ -168,8 +168,15 @@ Backend::~Backend() {
 
 void Backend::setLanguage(const QString &language) {
     m_language = language.section('-', 0, 0);
-    if (m_tracksReady)
+    // What C++ translated and kept is translated again.
+    if (m_tracksChosen)
+        labelTracks();
+    if (hasMedia())
         buildInfo();
+    emit tracksChanged();
+    emit infoChanged();
+    emit metadataChanged();
+    emit errorChanged();
 }
 
 QString Backend::fileName() const {
@@ -298,10 +305,16 @@ void Backend::ensurePlayer() {
     });
     connect(m_player, &QMediaPlayer::tracksChanged, this, &Backend::onTracks);
     connect(m_player, &QMediaPlayer::metaDataChanged, this, &Backend::updateMetadata);
+    // Qt's own messages are English and technical, so the window says it in
+    // its own words; the detail goes to the log for whoever looks.
     connect(m_player, &QMediaPlayer::errorOccurred, this, [this](QMediaPlayer::Error error, const QString &message) {
         if (error == QMediaPlayer::NoError)
             return;
-        setError(message.isEmpty() ? tr("This file could not be played.") : message);
+        qWarning("showtime: %s", qPrintable(message));
+        setError(error == QMediaPlayer::FormatError          ? Problem::Format
+                 : error == QMediaPlayer::NetworkError       ? Problem::Network
+                 : error == QMediaPlayer::AccessDeniedError  ? Problem::Access
+                                                             : Problem::Unplayable);
     });
     if (m_player->pitchCompensationAvailability() != QMediaPlayer::PitchCompensationAvailability::Unavailable)
         m_player->setPitchCompensation(true);
@@ -389,11 +402,14 @@ void Backend::load(int index) {
     m_artist.clear();
     m_coverArt.clear();
     m_summary.clear();
-    m_error.clear();
+    m_problem = Problem::None;
+    m_stopped = false;
     m_position = 0;
     m_ended = false;
     m_loaded = false;
-    m_hasVideo = false;
+    // hasVideo stays as the player has it: Qt says only when it changes, so a
+    // second video after a first would never say so again. onStatus() syncs
+    // it once the new file has loaded.
     {
         QMutexLocker locker(&m_frameLock);
         m_frame = QVideoFrame();
@@ -428,10 +444,9 @@ void Backend::load(int index) {
         const QString path = m_source.toLocalFile();
         if (!QFileInfo(path).isReadable()) {
             m_player->setSource(QUrl());
-            emit mediaChanged();
-            emit playlistChanged();
-            setError(QFileInfo::exists(path) ? tr("%1 can't be read.").arg(QFileInfo(path).fileName())
-                                             : tr("%1 doesn't exist.").arg(QFileInfo(path).fileName()));
+            m_problem = QFileInfo::exists(path) ? Problem::Unreadable : Problem::Missing;
+            buildInfo();
+            emitFileChanged();
             return;
         }
         m_pendingResume = m_positions.lookup(path);
@@ -460,11 +475,18 @@ void Backend::load(int index) {
         m_player->setSource(QUrl());
     m_player->setSource(m_source);
     m_player->setPlaybackRate(m_rate);
+    emitFileChanged();
+    m_player->play();
+}
+
+// Everything a new file changes, said once, whichever way load() ended.
+void Backend::emitFileChanged() {
     emit mediaChanged();
     emit metadataChanged();
     emit errorChanged();
     emit positionChanged();
     emit statusChanged();
+    emit playingChanged();
     emit subtitleTextChanged();
     emit tracksChanged();
     emit chapterChanged();
@@ -472,15 +494,27 @@ void Backend::load(int index) {
     emit resumedAtChanged();
     emit playlistChanged();
     emit previewsChanged();
-    emit hasVideoChanged();
-    m_player->play();
 }
 
-void Backend::setError(const QString &error) {
-    if (m_error == error)
+void Backend::setError(Problem problem) {
+    if (m_problem == problem)
         return;
-    m_error = error;
+    m_problem = problem;
     emit errorChanged();
+}
+
+QString Backend::error() const {
+    const QString name = fileName();
+    switch (m_problem) {
+    case Problem::None: return {};
+    case Problem::Missing: return tr("%1 doesn't exist.").arg(name);
+    case Problem::Unreadable: return tr("%1 can't be read.").arg(name);
+    case Problem::Format: return tr("Its format or codec isn't one ffmpeg can play.");
+    case Problem::Network: return tr("The stream could not be reached.");
+    case Problem::Access: return tr("Showtime isn't allowed to open it.");
+    case Problem::Unplayable: break;
+    }
+    return tr("This file could not be played.");
 }
 
 void Backend::onStatus() {
@@ -488,11 +522,17 @@ void Backend::onStatus() {
     if (status == QMediaPlayer::LoadedMedia || status == QMediaPlayer::BufferedMedia) {
         if (!m_loaded) {
             m_loaded = true;
+            if (m_hasVideo != m_player->hasVideo()) {
+                m_hasVideo = m_player->hasVideo();
+                emit hasVideoChanged();
+            }
             if (m_pendingResume > 0 && m_player->isSeekable()) {
                 m_resumedAt = m_pendingResume;
                 // A few seconds back, so the sentence that was interrupted
                 // starts again.
-                m_player->setPosition(std::max<qint64>(0, m_pendingResume - 3000));
+                const qint64 target = std::max<qint64>(0, m_pendingResume - 3000);
+                m_player->setPosition(target);
+                emit seeked(target);
                 emit resumedAtChanged();
             }
             m_pendingResume = -1;
@@ -506,8 +546,8 @@ void Backend::onStatus() {
         emit positionChanged();
         rememberPosition();
     } else if (status == QMediaPlayer::InvalidMedia) {
-        if (m_error.isEmpty())
-            setError(tr("This file could not be played."));
+        if (m_problem == Problem::None)
+            setError(Problem::Unplayable);
     }
     emit statusChanged();
 }
@@ -518,6 +558,10 @@ void Backend::onProbed(const probe::Info &info, const QList<subtitles::Sidecar> 
     m_probe = info;
     m_sidecars = sidecars;
     m_probed = true;
+    // Without ffprobe the picture plays but chapters and subtitles can't be
+    // offered, which the window says rather than quietly doing less.
+    if (info.missingTool)
+        emit notice(info.error);
     m_chapters.clear();
     m_chapterList.clear();
     for (const probe::Chapter &chapter : m_probe.chapters) {
@@ -546,30 +590,6 @@ void Backend::chooseTracks() {
         return;
     m_tracksChosen = true;
 
-    // Audio: Qt's tracks named by Qt's metadata, with ffprobe's details,
-    // matched by order within the type.
-    const QList<QMediaMetaData> audio = m_player->audioTracks();
-    const QList<probe::Stream> probedAudio = m_probe.ofType("audio");
-    m_audioLabels.clear();
-    m_audioLanguages.clear();
-    for (int i = 0; i < audio.size(); ++i) {
-        QString language = languageOf(audio.at(i));
-        QString title = audio.at(i).value(QMediaMetaData::Title).toString();
-        QString channels;
-        if (i < probedAudio.size()) {
-            if (language.isEmpty())
-                language = probe::shortLanguage(probedAudio.at(i).language);
-            if (title.isEmpty())
-                title = probedAudio.at(i).title;
-            channels = channelName(probedAudio.at(i));
-        }
-        QString label = join({probe::languageName(language), title, channels});
-        if (label.isEmpty())
-            label = tr("Track %1").arg(i + 1);
-        m_audioLabels << label;
-        m_audioLanguages << language;
-    }
-
     // Subtitles: only text tracks, which Qt's subtitle path can show, then
     // the files beside the video.
     const QList<QMediaMetaData> embedded = m_player->subtitleTracks();
@@ -585,21 +605,15 @@ void Backend::chooseTracks() {
         choice.language = languageOf(embedded.at(i));
         if (choice.language.isEmpty())
             choice.language = probe::shortLanguage(probedSubtitles.at(i).language);
-        QString title = embedded.at(i).value(QMediaMetaData::Title).toString();
-        if (title.isEmpty())
-            title = probedSubtitles.at(i).title;
-        choice.label = join({probe::languageName(choice.language), title});
-        if (choice.label.isEmpty())
-            choice.label = tr("Subtitles %1").arg(i + 1);
         m_subtitleChoices << choice;
     }
     for (int i = 0; i < m_sidecars.size(); ++i) {
         SubtitleChoice choice;
         choice.sidecar = i;
         choice.language = probe::shortLanguage(m_sidecars.at(i).language);
-        choice.label = m_sidecars.at(i).label;
         m_subtitleChoices << choice;
     }
+    labelTracks();
 
     const QString audioPreference = m_preferences.value("audioLanguage").toString();
     int track = m_player->activeAudioTrack();
@@ -636,6 +650,48 @@ void Backend::chooseTracks() {
     buildInfo();
     emit tracksChanged();
     emit infoChanged();
+}
+
+// The names the tracks are listed under, which a language switch redoes.
+void Backend::labelTracks() {
+    // Audio: Qt's tracks named by Qt's metadata, with ffprobe's details,
+    // matched by order within the type.
+    const QList<QMediaMetaData> audio = m_player->audioTracks();
+    const QList<probe::Stream> probedAudio = m_probe.ofType("audio");
+    m_audioLabels.clear();
+    m_audioLanguages.clear();
+    for (int i = 0; i < audio.size(); ++i) {
+        QString language = languageOf(audio.at(i));
+        QString title = audio.at(i).value(QMediaMetaData::Title).toString();
+        QString channels;
+        if (i < probedAudio.size()) {
+            if (language.isEmpty())
+                language = probe::shortLanguage(probedAudio.at(i).language);
+            if (title.isEmpty())
+                title = probedAudio.at(i).title;
+            channels = channelName(probedAudio.at(i));
+        }
+        QString label = join({probe::languageName(language), title, channels});
+        if (label.isEmpty())
+            label = tr("Track %1").arg(i + 1);
+        m_audioLabels << label;
+        m_audioLanguages << language;
+    }
+
+    const QList<QMediaMetaData> embedded = m_player->subtitleTracks();
+    const QList<probe::Stream> probedSubtitles = m_probe.ofType("subtitle");
+    for (SubtitleChoice &choice : m_subtitleChoices) {
+        if (choice.sidecar >= 0) {
+            choice.label = m_sidecars.at(choice.sidecar).label;
+            continue;
+        }
+        QString title = embedded.value(choice.embedded).value(QMediaMetaData::Title).toString();
+        if (title.isEmpty() && choice.embedded < probedSubtitles.size())
+            title = probedSubtitles.at(choice.embedded).title;
+        choice.label = join({probe::languageName(choice.language), title});
+        if (choice.label.isEmpty())
+            choice.label = tr("Subtitles %1").arg(choice.embedded + 1);
+    }
 }
 
 void Backend::applyAudio(int track, bool remember) {
@@ -859,6 +915,7 @@ void Backend::togglePlay() {
 void Backend::play() {
     if (!m_player)
         return;
+    m_stopped = false;
     if (m_ended) {
         m_ended = false;
         emit statusChanged();
@@ -876,8 +933,10 @@ void Backend::stop() {
     if (!m_player)
         return;
     rememberPosition();
+    m_stopped = true;
     m_player->pause();
-    m_player->setPosition(0);
+    setPosition(0);
+    emit playingChanged();
 }
 
 void Backend::setPosition(qint64 ms) {
@@ -1098,7 +1157,7 @@ void Backend::trimInOmacut() {
 }
 
 void Backend::rememberPosition() {
-    if (!m_player || !m_source.isLocalFile() || !m_loaded || !m_error.isEmpty())
+    if (!m_player || !m_source.isLocalFile() || !m_loaded || m_problem != Problem::None)
         return;
     const QString file = m_source.toLocalFile();
     const qint64 position = m_ended ? m_duration : m_position, duration = m_duration;

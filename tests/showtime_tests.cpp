@@ -446,6 +446,14 @@ private slots:
         QCOMPARE(backend.subtitleLabel(), QString());
         backend.close();
 
+        // A language switch says again everything C++ translated.
+        QSignalSpy tracks(&backend, &Backend::tracksChanged), info(&backend, &Backend::infoChanged),
+            errors(&backend, &Backend::errorChanged);
+        backend.setLanguage("de");
+        QCOMPARE(tracks.size(), 1);
+        QCOMPARE(info.size(), 1);
+        QCOMPARE(errors.size(), 1);
+
         // An English reader of an English film gets none.
         QTemporaryDir fresh;
         options.positionsPath = fresh.filePath("positions.json");
@@ -501,8 +509,13 @@ private slots:
         backend.open({m_clip, missing});
         QCOMPARE(backend.playlist(), (QStringList{m_clip, missing}));
         QCOMPARE(backend.nextName(), QString("gone.mkv"));
+        QTRY_VERIFY_WITH_TIMEOUT(!backend.info().isEmpty() && backend.chapters().isEmpty(), 10000);
         QVERIFY(backend.next());
         QCOMPARE(backend.error(), QString("gone.mkv doesn't exist."));
+        // Nothing of the last file stays: its subtitles, its card, its picture.
+        QCOMPARE(backend.subtitleText(), QString());
+        QCOMPARE(backend.info().first().toMap().value("value").toString(), QString("gone.mkv"));
+        QVERIFY(!backend.currentFrame().isValid());
         QVERIFY(!backend.next());
         QVERIFY(backend.previous());
         QCOMPARE(backend.fileName(), QString("clip.mkv"));
@@ -557,6 +570,13 @@ private slots:
             QTRY_VERIFY(backend.playing());
             send(player, "Seek", {qlonglong(-1000000)});
             QVERIFY(backend.position() < 1000);
+            // Stop is stopped, not paused, as the specification has it.
+            send(player, "Stop");
+            QCOMPARE(mpris.playbackStatus(), QString("Stopped"));
+            QCOMPARE(backend.position(), qint64(0));
+            send(player, "Play");
+            QTRY_VERIFY(backend.playing());
+            QCOMPARE(mpris.playbackStatus(), QString("Playing"));
             QDBusConnection::disconnectFromBus("showtime-client");
             backend.close();
         }

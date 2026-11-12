@@ -120,6 +120,7 @@ Info run(const QString &path, int timeoutMs, const std::atomic_bool *cancelled) 
     const QString ffprobe = toolPath("ffprobe");
     if (ffprobe.isEmpty()) {
         info.error = Texts::tr("ffprobe was not found. Install ffmpeg.");
+        info.missingTool = true;
         return info;
     }
     QProcess process;

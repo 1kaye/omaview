@@ -35,8 +35,11 @@ Mpris::Mpris(Backend *backend, QObject *parent, const QDBusConnection &bus)
         propertiesChanged(playerInterface, {{"Metadata", metadata()},
                                             {"CanGoNext", m_backend->playlistIndex() + 1 < m_backend->playlistCount()},
                                             {"CanGoPrevious", m_backend->playlistIndex() > 0},
+                                            {"CanPlay", m_backend->hasMedia()},
+                                            {"CanPause", m_backend->hasMedia()},
                                             {"CanSeek", m_backend->seekable()}});
     };
+    connect(backend, &Backend::mediaChanged, this, media);
     connect(backend, &Backend::metadataChanged, this, media);
     connect(backend, &Backend::durationChanged, this, media);
     connect(backend, &Backend::playlistChanged, this, media);
@@ -56,7 +59,7 @@ Mpris::~Mpris() {
 }
 
 QString Mpris::playbackStatus() const {
-    if (!m_backend->hasMedia() || m_backend->ended())
+    if (!m_backend->hasMedia() || m_backend->ended() || m_backend->stopped())
         return QStringLiteral("Stopped");
     return m_backend->playing() ? QStringLiteral("Playing") : QStringLiteral("Paused");
 }
