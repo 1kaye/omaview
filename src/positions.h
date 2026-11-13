@@ -9,7 +9,7 @@
 // replaces the file atomically.
 class Positions {
 public:
-    // Tests pass a temp file; the default is ~/.local/state/showtime/positions.json.
+    // Tests pass a temp file; the default is ~/.local/state/omaplay/positions.json.
     explicit Positions(const QString &path = {});
 
     static constexpr qint64 minimumDuration = 5 * 60 * 1000;

@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
-  <title>Showtime</title>
+  <title>Video Player</title>
   <desc>A dark picture with a yellow play triangle and a thin yellow progress line beneath it, on Omacut's dark tile.</desc>
   <defs>
     <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">

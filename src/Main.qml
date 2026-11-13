@@ -13,7 +13,7 @@ ApplicationWindow {
     minimumWidth: 320
     minimumHeight: 200
     visible: true
-    title: backend.hasMedia ? backend.title + " — Showtime" : "Showtime"
+    title: backend.hasMedia ? backend.title : qsTr("Video Player")
     // The picture's surround is black whatever the theme, as every player's
     // is; ApplicationWindow would otherwise paint Material's background.
     color: "black"
@@ -361,7 +361,7 @@ ApplicationWindow {
             spacing: 8
             Text {
                 Layout.fillWidth: true
-                text: qsTr("Showtime can't play %1").arg(backend.fileName)
+                text: qsTr("Can't play %1").arg(backend.fileName)
                 color: "white"
                 font.pixelSize: 17
                 horizontalAlignment: Text.AlignHCenter

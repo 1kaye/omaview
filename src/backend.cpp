@@ -310,7 +310,7 @@ void Backend::ensurePlayer() {
     connect(m_player, &QMediaPlayer::errorOccurred, this, [this](QMediaPlayer::Error error, const QString &message) {
         if (error == QMediaPlayer::NoError)
             return;
-        qWarning("showtime: %s", qPrintable(message));
+        qWarning("omaplay: %s", qPrintable(message));
         setError(error == QMediaPlayer::FormatError          ? Problem::Format
                  : error == QMediaPlayer::NetworkError       ? Problem::Network
                  : error == QMediaPlayer::AccessDeniedError  ? Problem::Access
@@ -511,7 +511,7 @@ QString Backend::error() const {
     case Problem::Unreadable: return tr("%1 can't be read.").arg(name);
     case Problem::Format: return tr("Its format or codec isn't one ffmpeg can play.");
     case Problem::Network: return tr("The stream could not be reached.");
-    case Problem::Access: return tr("Showtime isn't allowed to open it.");
+    case Problem::Access: return tr("Permission to open it was denied.");
     case Problem::Unplayable: break;
     }
     return tr("This file could not be played.");
@@ -719,7 +719,7 @@ void Backend::applySubtitle(int index, bool remember) {
         const SubtitleChoice &choice = m_subtitleChoices.at(m_subtitleChoice);
         // An embedded track shows through Qt at once, which only shows a cue
         // when playback reaches its start; its cues are read out in the
-        // background too, and once they are in, Showtime draws them itself,
+        // background too, and once they are in, the window draws them itself,
         // so a seek into the middle of a line shows the line.
         m_player->setActiveSubtitleTrack(choice.embedded);
         loadCues(m_subtitleChoice);
@@ -1116,7 +1116,7 @@ void Backend::copyFrame() {
         image.save(&buffer, "PNG");
         const bool copied = frames::copyWithWlCopy(png);
         QMetaObject::invokeMethod(qApp, [self, image, copied, at] {
-            // Without wl-copy, Qt's clipboard holds it while Showtime runs.
+            // Without wl-copy, Qt's clipboard holds it while the app runs.
             if (!copied)
                 QGuiApplication::clipboard()->setImage(image);
             if (self)
@@ -1133,7 +1133,7 @@ void Backend::saveFrame() {
     QString folder = QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
     if (!QDir(folder).exists())
         folder = QDir::homePath();
-    const QString base = m_source.isLocalFile() ? QFileInfo(m_source.toLocalFile()).completeBaseName() : "showtime";
+    const QString base = m_source.isLocalFile() ? QFileInfo(m_source.toLocalFile()).completeBaseName() : "omaplay";
     const QString name = QString("%1-%2.png").arg(base, clock(m_position).replace(':', '-'));
     m_picker->saveImage(QUrl::fromLocalFile(folder + "/" + name));
 }

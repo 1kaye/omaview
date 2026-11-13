@@ -177,7 +177,7 @@ bool ffmpeg(const QString &directory, const QStringList &arguments) {
 
 }  // namespace
 
-class ShowtimeTests : public QObject {
+class OmaplayTests : public QObject {
     Q_OBJECT
 
     QTemporaryDir m_home;
@@ -529,7 +529,7 @@ private slots:
         QVERIFY2(daemon.waitForReadyRead(5000), "dbus-daemon is needed for this test");
         const QString address = QString::fromUtf8(daemon.readLine()).trimmed();
         {
-            QDBusConnection bus = QDBusConnection::connectToBus(address, "showtime-test");
+            QDBusConnection bus = QDBusConnection::connectToBus(address, "omaplay-test");
             QVERIFY(bus.isConnected());
             QTemporaryDir state;
             Backend::Options options;
@@ -540,7 +540,7 @@ private slots:
             Mpris mpris(&backend, nullptr, bus);
             QVERIFY(mpris.registered());
             QCOMPARE(mpris.service(),
-                     QString("org.mpris.MediaPlayer2.showtime.instance%1").arg(QCoreApplication::applicationPid()));
+                     QString("org.mpris.MediaPlayer2.omaplay.instance%1").arg(QCoreApplication::applicationPid()));
             QCOMPARE(mpris.playbackStatus(), QString("Stopped"));
             backend.open({m_clip});
             QTRY_VERIFY_WITH_TIMEOUT(backend.playing(), 10000);
@@ -550,7 +550,7 @@ private slots:
 
             // A second connection plays the part of playerctl, asynchronously,
             // since this thread is also the one that answers.
-            QDBusConnection client = QDBusConnection::connectToBus(address, "showtime-client");
+            QDBusConnection client = QDBusConnection::connectToBus(address, "omaplay-client");
             auto send = [&](const QString &interface, const QString &method, const QVariantList &arguments = {}) {
                 QDBusMessage message = QDBusMessage::createMethodCall(mpris.service(), "/org/mpris/MediaPlayer2",
                                                                       interface, method);
@@ -577,10 +577,10 @@ private slots:
             send(player, "Play");
             QTRY_VERIFY(backend.playing());
             QCOMPARE(mpris.playbackStatus(), QString("Playing"));
-            QDBusConnection::disconnectFromBus("showtime-client");
+            QDBusConnection::disconnectFromBus("omaplay-client");
             backend.close();
         }
-        QDBusConnection::disconnectFromBus("showtime-test");
+        QDBusConnection::disconnectFromBus("omaplay-test");
         daemon.kill();
         daemon.waitForFinished();
     }
@@ -774,5 +774,5 @@ private slots:
 
 };
 
-QTEST_MAIN(ShowtimeTests)
-#include "showtime_tests.moc"
+QTEST_MAIN(OmaplayTests)
+#include "omaplay_tests.moc"

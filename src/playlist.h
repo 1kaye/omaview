@@ -5,7 +5,7 @@
 
 namespace playlist {
 
-// Whether a file looks like something Showtime plays, by its extension.
+// Whether a file looks like something Omaplay plays, by its extension.
 bool playable(const QString &path);
 bool audioOnly(const QString &path);
 

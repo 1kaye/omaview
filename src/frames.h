@@ -17,7 +17,7 @@ QImage extract(const QString &path, double seconds, QString *error = nullptr);
 bool savePng(const QImage &image, const QString &path, QString *error = nullptr);
 
 // Puts a PNG on the Wayland clipboard through wl-copy, which keeps serving it
-// after Showtime quits; false when wl-copy isn't there or fails.
+// after Omaplay quits; false when wl-copy isn't there or fails.
 bool copyWithWlCopy(const QByteArray &png);
 
 // The scrub previews' layout: count tiles of tileSize in rows of columns,

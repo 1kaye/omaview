@@ -6,7 +6,7 @@ import subprocess
 import tempfile
 import unittest
 
-SHOWTIME = os.environ.get("SHOWTIME", "build/showtime")
+OMAPLAY = os.environ.get("OMAPLAY", "build/omaplay")
 
 
 def run(*arguments, home):
@@ -16,7 +16,7 @@ def run(*arguments, home):
         if key not in ("WAYLAND_DISPLAY", "DISPLAY", "QT_QPA_PLATFORM")
     }
     environment.update(HOME=home, XDG_STATE_HOME=os.path.join(home, "state"), LANG="da_DK.UTF-8")
-    return subprocess.run([SHOWTIME, *arguments], capture_output=True, text=True, env=environment, timeout=120)
+    return subprocess.run([OMAPLAY, *arguments], capture_output=True, text=True, env=environment, timeout=120)
 
 
 class CommandLineTests(unittest.TestCase):
@@ -43,7 +43,7 @@ class CommandLineTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("info <file>", result.stdout)
         result = run("--version", home=self.home)
-        self.assertEqual(result.stdout.strip(), "showtime 0.1.0")
+        self.assertEqual(result.stdout.strip(), "omaplay 0.1.0")
 
     def test_info_as_json(self):
         result = run("info", self.clip, "--json", home=self.home)
@@ -88,14 +88,14 @@ class CommandLineTests(unittest.TestCase):
         os.makedirs(os.path.join(self.home, ".claude"), exist_ok=True)
         result = run("skill", "install", home=self.home)
         self.assertEqual(result.returncode, 0, result.stderr)
-        skill = os.path.join(self.home, ".agents/skills/showtime/SKILL.md")
+        skill = os.path.join(self.home, ".agents/skills/omaplay/SKILL.md")
         with open(skill) as text:
-            self.assertIn("name: showtime", text.read())
-        link = os.path.join(self.home, ".claude/skills/showtime")
+            self.assertIn("name: omaplay", text.read())
+        link = os.path.join(self.home, ".claude/skills/omaplay")
         self.assertTrue(os.path.islink(link))
-        self.assertEqual(os.readlink(link), "../../.agents/skills/showtime")
+        self.assertEqual(os.readlink(link), "../../.agents/skills/omaplay")
         printed = run("skill", home=self.home)
-        self.assertIn("showtime frame", printed.stdout)
+        self.assertIn("omaplay frame", printed.stdout)
 
 
 if __name__ == "__main__":

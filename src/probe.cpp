@@ -66,7 +66,7 @@ Info parse(const QByteArray &json, const QString &path) {
     QJsonParseError parseError;
     const QJsonObject root = QJsonDocument::fromJson(json, &parseError).object();
     if (parseError.error != QJsonParseError::NoError || root.isEmpty()) {
-        info.error = Texts::tr("ffprobe gave an answer Showtime could not read.");
+        info.error = Texts::tr("ffprobe gave an answer that could not be read.");
         return info;
     }
     const QJsonObject format = root.value("format").toObject();

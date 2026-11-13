@@ -48,12 +48,12 @@ QString clock(double seconds) {
 }
 
 int info(const QStringList &arguments) {
-    Command command("info", "Duration, streams, chapters, and where Showtime would resume.");
+    Command command("info", "Duration, streams, chapters, and where Omaplay would resume.");
     command.parser.addPositionalArgument("file", "The video or music file.");
     command.parser.process(arguments);
     const QString path = command.argument(1);
     if (path.isEmpty())
-        return fail("Usage: showtime info <file> [--json]");
+        return fail("Usage: omaplay info <file> [--json]");
     if (!QFileInfo(path).isFile())
         return fail("No such file: " + path);
     const probe::Info info = probe::run(QFileInfo(path).absoluteFilePath());
@@ -107,7 +107,7 @@ int frame(const QStringList &arguments) {
     command.parser.process(arguments);
     const QString path = command.argument(1);
     if (path.isEmpty() || !command.parser.isSet(output))
-        return fail("Usage: showtime frame <file> --at <time> -o <out.png> [--json]");
+        return fail("Usage: omaplay frame <file> --at <time> -o <out.png> [--json]");
     if (!QFileInfo(path).isFile())
         return fail("No such file: " + path);
     const double seconds = parseTime(command.parser.value(at));
@@ -131,7 +131,7 @@ int frame(const QStringList &arguments) {
 // Claude Code, found directly by Codex.
 int skill(const QStringList &arguments) {
     Command command("skill", "Print the agent skill, or install it for your coding agents with: skill install.", false);
-    command.parser.addPositionalArgument("install", "Copy to ~/.agents/skills/showtime and link into ~/.claude/skills", "[install]");
+    command.parser.addPositionalArgument("install", "Copy to ~/.agents/skills/omaplay and link into ~/.claude/skills", "[install]");
     command.parser.process(arguments);
     QFile bundled(":/skill.md");
     if (!bundled.open(QIODevice::ReadOnly))
@@ -142,22 +142,22 @@ int skill(const QStringList &arguments) {
         return 0;
     }
     if (command.argument(1) != "install")
-        return fail("Use showtime skill to print the skill, or showtime skill install.");
+        return fail("Use omaplay skill to print the skill, or omaplay skill install.");
     const QDir home = QDir::home();
-    const QString directory = home.filePath(".agents/skills/showtime");
+    const QString directory = home.filePath(".agents/skills/omaplay");
     QSaveFile file(directory + "/SKILL.md");
     if (!QDir().mkpath(directory) || !file.open(QIODevice::WriteOnly) || file.write(text) < 0 || !file.commit())
         return fail("Could not write " + file.fileName());
     print(stdout, "Installed " + file.fileName());
     if (!home.exists(".claude"))
         return 0;
-    const QString link = home.filePath(".claude/skills/showtime");
+    const QString link = home.filePath(".claude/skills/omaplay");
     const QFileInfo existing(link);
     if (existing.isSymLink())
         QFile::remove(link);
     else if (existing.exists())
         return fail(link + " exists and is not a link; leaving it alone.");
-    if (!home.mkpath(".claude/skills") || !QFile::link("../../.agents/skills/showtime", link))
+    if (!home.mkpath(".claude/skills") || !QFile::link("../../.agents/skills/omaplay", link))
         return fail("Could not link " + link);
     print(stdout, "Linked " + link);
     return 0;
@@ -167,7 +167,7 @@ int help(const QStringList &arguments) {
     const QString topic = arguments.value(2);
     if (isCliCommand(topic) && topic != "help")
         return runCli({arguments.value(0), topic, "--help"});
-    print(stdout, "Usage: showtime [open] [files or URLs...]\n       showtime <command> [options]\n\n" + cliSummary());
+    print(stdout, "Usage: omaplay [open] [files or URLs...]\n       omaplay <command> [options]\n\n" + cliSummary());
     return 0;
 }
 
@@ -191,7 +191,7 @@ double parseTime(const QString &text) {
 QString cliSummary() {
     return "Player:\n"
            "  open [files or URLs...]        Play, in a window; several files are the playlist\n\n"
-           "Commands that need no display (showtime help <command> for options):\n"
+           "Commands that need no display (omaplay help <command> for options):\n"
            "  info <file>                    Duration, streams, chapters, the resume position\n"
            "  frame <file> --at T -o F.png   The exact frame at a time, as a PNG\n"
            "  skill [install]                Print the skill for coding agents, or install it";

@@ -1,4 +1,4 @@
-// Showtime — Omarchy's media player: open a video or a song and watch it, from
+// Omaplay — Omarchy's media player, Video Player in the launcher: open a video or a song and watch it, from
 // the keyboard, with nothing on screen but the picture.
 
 #include <QGuiApplication>
@@ -27,23 +27,23 @@ int main(int argc, char *argv[]) {
         qputenv("QT_QPA_PLATFORM", "offscreen");
 
     QGuiApplication app(argc, argv);
-    app.setApplicationName("showtime");
+    app.setApplicationName("omaplay");
     app.setApplicationVersion("0.1.0");
 
     if (command)
         return runCli(app.arguments());
     if (first == "--version" || first == "-v") {
-        fprintf(stdout, "showtime %s\n", qPrintable(app.applicationVersion()));
+        fprintf(stdout, "omaplay %s\n", qPrintable(app.applicationVersion()));
         return 0;
     }
     if (helpOrVersion)
         return runCli({app.arguments().first(), "help"});
 
-    // Matches the window to showtime.desktop, so the compositor (Wayland
+    // Matches the window to omaplay.desktop, so the compositor (Wayland
     // app_id) and the launcher pick up the installed icon. The compiled-in
     // copy covers a run from build/, and needs qt6-svg's icon engine.
-    app.setDesktopFileName("showtime");
-    app.setWindowIcon(QIcon::fromTheme("showtime", QIcon(":/showtime.svg")));
+    app.setDesktopFileName("omaplay");
+    app.setWindowIcon(QIcon::fromTheme("omaplay", QIcon(":/omaplay.svg")));
 
     QQuickStyle::setStyle("Material");
 
@@ -85,7 +85,7 @@ int main(int argc, char *argv[]) {
     });
     QObject::connect(&app, &QCoreApplication::aboutToQuit, &backend, &Backend::close);
 
-    // `showtime open a.mkv` and `showtime a.mkv`, which launchers use, alike.
+    // `omaplay open a.mkv` and `omaplay a.mkv`, which launchers use, alike.
     // The file opens once the window has drawn, since starting the player
     // probes the GPU's decoders on this thread.
     QStringList files = app.arguments().mid(1);

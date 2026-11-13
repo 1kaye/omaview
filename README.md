@@ -1,22 +1,22 @@
-# Showtime
+# Omaplay
 
-Omarchy's media player. Open a video or a song and watch it, with nothing on screen but the picture and a thin line that says how far along you are. Every key answers with a short on-screen display, and Tab brings in the controls when you want them.
+Omarchy's media player, listed in the launcher as Video Player. Open a video or a song and watch it, with nothing on screen but the picture and a thin line that says how far along you are. Every key answers with a short on-screen display, and Tab brings in the controls when you want them.
 
-![Showtime playing a film, bare](screenshots/bare.jpg)
+![Omaplay playing a film, bare](screenshots/bare.jpg)
 
-![Showtime with the controls brought in by Tab](screenshots/overlay.jpg)
+![Omaplay with the controls brought in by Tab](screenshots/overlay.jpg)
 
-Showtime plays through ffmpeg: Qt Multimedia's FFmpeg backend decodes, on the GPU where it can, and the `ffmpeg` and `ffprobe` tools read chapters and track details, make the scrub previews, read subtitles, and grab exact frames.
+Omaplay plays through ffmpeg: Qt Multimedia's FFmpeg backend decodes, on the GPU where it can, and the `ffmpeg` and `ffprobe` tools read chapters and track details, make the scrub previews, read subtitles, and grab exact frames.
 
 ## Command line
 
-`showtime movie.mkv` (or `showtime open movie.mkv`) plays a file, with the other videos and songs in its folder as the playlist. Several files given at once are the playlist, in that order. A URL plays what ffmpeg can open.
+`omaplay movie.mkv` (or `omaplay open movie.mkv`) plays a file, with the other videos and songs in its folder as the playlist. Several files given at once are the playlist, in that order. A URL plays what ffmpeg can open.
 
 These need no display, take `--json`, and exit 0 or 1 with the reason on stderr:
 
-- `showtime info <file>` — duration, streams, chapters, and where Showtime would resume.
-- `showtime frame <file> --at 1:02:03 -o still.png` — the exact frame at a time.
-- `showtime skill install` — installs a short skill for coding agents.
+- `omaplay info <file>` — duration, streams, chapters, and where Omaplay would resume.
+- `omaplay frame <file> --at 1:02:03 -o still.png` — the exact frame at a time.
+- `omaplay skill install` — installs a short skill for coding agents.
 
 ## Shortcuts
 
@@ -45,25 +45,25 @@ Click the picture to play or pause, double-click it for fullscreen, and scroll f
 
 ## What it remembers
 
-Where you stopped in anything longer than five minutes, so it resumes there (Home starts over), and forgets once you reach the end. The volume, and the subtitle and audio languages you last picked. They live in `~/.local/state/showtime/positions.json`, keyed by a hash of each file's path, size and time, so the file holds no names.
+Where you stopped in anything longer than five minutes, so it resumes there (Home starts over), and forgets once you reach the end. The volume, and the subtitle and audio languages you last picked. They live in `~/.local/state/omaplay/positions.json`, keyed by a hash of each file's path, size and time, so the file holds no names.
 
 Subtitles start off unless the film speaks a language other than yours and has subtitles in yours. Files beside the video named after it (`movie.srt`, `movie.en.srt`, `.vtt`, `.ass`) are offered too. Bitmap subtitle tracks (PGS, VobSub) aren't shown, and the info card says so.
 
-While a video plays, Showtime keeps the screen from going to sleep. Media keys, `playerctl` and the bar's now-playing reach it through MPRIS.
+While a video plays, Omaplay keeps the screen from going to sleep. Media keys, `playerctl` and the bar's now-playing reach it through MPRIS.
 
-Showtime speaks the language picked under Omarchy's Setup > Language, follows the theme, and mirrors for right-to-left languages.
+Omaplay speaks the language picked under Omarchy's Setup > Language, follows the theme, and mirrors for right-to-left languages.
 
 ## Requirements
 
 - Qt 6 with Multimedia: `qt6-base`, `qt6-declarative`, `qt6-multimedia` and `qt6-multimedia-ffmpeg`, `qt6-svg`, `qt6-wayland`
 - `ffmpeg`, for `ffprobe` and `ffmpeg`
-- `wl-clipboard`, so a copied frame outlives Showtime
+- `wl-clipboard`, so a copied frame outlives Omaplay
 - `xdg-desktop-portal` and a backend, for the open and save dialogs
 - To build: `cmake`, `wayland-protocols`
 
 ## Development
 
-`bin/build` builds into `build/`, and `bin/test` builds and runs every test offscreen: the backend against clips ffmpeg makes at test time, the real window driven by keys, and the command line as an agent uses it. `cmake --install build --prefix ~/.local` puts Showtime in the launcher before it is packaged.
+`bin/build` builds into `build/`, and `bin/test` builds and runs every test offscreen: the backend against clips ffmpeg makes at test time, the real window driven by keys, and the command line as an agent uses it. `cmake --install build --prefix ~/.local` puts Omaplay in the launcher before it is packaged.
 
 ## License
 

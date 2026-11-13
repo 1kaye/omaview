@@ -101,7 +101,7 @@ QImage extract(const QString &path, double at, QString *error) {
     }
     QImage image = QImage::fromData(png, "PNG");
     if (image.isNull() && error)
-        *error = Texts::tr("ffmpeg gave a frame Showtime could not read.");
+        *error = Texts::tr("ffmpeg gave a frame that could not be read.");
     return image;
 }
 
@@ -171,7 +171,7 @@ PreviewLayout PreviewLayout::forVideo(double duration, QSize videoSize) {
 }
 
 QString previewCacheDirectory() {
-    return QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation) + "/showtime/previews";
+    return QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation) + "/omaplay/previews";
 }
 
 QString previewCachePath(const QString &videoPath) {
