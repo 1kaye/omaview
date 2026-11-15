@@ -118,12 +118,13 @@ Item {
             // Smooth when a large photo is shrunk to fit.
             mipmap: !view.vector
             // A drawing is drawn again at the size it shows, so it stays sharp
-            // as it is zoomed, up to a size any GPU takes.
+            // as it is zoomed, up to a size any GPU takes. The size is in
+            // logical pixels; Qt multiplies it by the screen's ratio itself.
             sourceSize: {
                 if (!view.vector)
                     return undefined
-                const scale = view.ratio * Screen.devicePixelRatio
-                const limit = Math.min(scale, 8192 / Math.max(1, view.naturalWidth, view.naturalHeight))
+                const limit = Math.min(view.ratio,
+                                       8192 / Screen.devicePixelRatio / Math.max(1, view.naturalWidth, view.naturalHeight))
                 return Qt.size(Math.ceil(view.naturalWidth * limit), Math.ceil(view.naturalHeight * limit))
             }
             onStatusChanged: if (status === Image.Error) view.failed()
@@ -135,7 +136,8 @@ Item {
             source: view.source
             autoTransform: true
             smooth: true
-            playing: !view.paused
+            // Paused where it is, not stopped and started over.
+            paused: view.paused
             onStatusChanged: if (status === Image.Error) view.failed()
         }
     }

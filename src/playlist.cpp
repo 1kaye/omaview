@@ -93,15 +93,18 @@ QStringList siblings(const QString &path) {
 
 QStringList folder(const QString &directory) {
     QStringList found;
-    bool pictures = false;
+    int pictures = 0, songs = 0;
     for (const QFileInfo &entry : QDir(directory).entryInfoList(QDir::Files | QDir::Readable)) {
         const Kind each = kind(entry.fileName());
         if (each == Kind::None)
             continue;
-        pictures = pictures || each == Kind::Picture;
+        pictures += each == Kind::Picture;
+        songs += each == Kind::Audio;
         found << entry.absoluteFilePath();
     }
-    const Kind left = pictures ? Kind::Audio : Kind::Picture;
+    // An album's cover doesn't make it a folder of pictures: whichever there
+    // are more of wins.
+    const Kind left = pictures > songs ? Kind::Audio : Kind::Picture;
     found.removeIf([left](const QString &path) { return kind(path) == left; });
     sort(found);
     return found;

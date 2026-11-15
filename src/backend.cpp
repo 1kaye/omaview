@@ -8,8 +8,6 @@
 #include <QEventLoopLocker>
 #include <QFileInfo>
 #include <QGuiApplication>
-#include <QJsonArray>
-#include <QJsonDocument>
 #include <QJsonObject>
 #include <QLocale>
 #include <QMediaMetaData>
@@ -130,13 +128,12 @@ Backend::Backend(const Options &options, QObject *parent)
     // another window holding the file's lock never stalls the picture.
     m_writer.setMaxThreadCount(1);
     m_preferences = m_positions.preferences();
-    if (!QStandardPaths::findExecutable("pw-dump").isEmpty() && !QStandardPaths::findExecutable("wpctl").isEmpty())
+    if (!QStandardPaths::findExecutable("wpctl").isEmpty())
         m_maxVolume = 1.5;
     m_volume = std::clamp(m_preferences.value("volume").toDouble(1.0), 0.0, m_maxVolume);
     // A new stream starts at its own level, so a boost is set again once it
     // plays, and a drag of the volume asks PipeWire once it pauses.
     m_boostTimer.setSingleShot(true);
-    m_boostTimer.setInterval(250);
     connect(&m_boostTimer, &QTimer::timeout, this, &Backend::applyBoost);
     m_muted = m_preferences.value("muted").toBool(false);
     m_preferenceTimer.setSingleShot(true);
@@ -292,11 +289,22 @@ void Backend::ensurePlayer() {
             if (!frame.isValid())
                 return;
             QSize size;
+            bool upright = false;
             {
                 QMutexLocker locker(&m_frameLock);
                 m_frame = frame;
-                if (frame.size() != m_frameSize)
+                if (frame.size() != m_frameSize) {
                     size = m_frameSize = frame.size();
+                    // A phone's portrait clip is stored on its side, and turned
+                    // as it's shown: its size is the turned one. Qt gives the
+                    // turn on the frame, or in the file's metadata, which the
+                    // GUI thread reads as it takes the size.
+                    if (frame.rotation() == QtVideo::Rotation::Clockwise90
+                        || frame.rotation() == QtVideo::Rotation::Clockwise270)
+                        size.transpose();
+                    else
+                        upright = true;
+                }
             }
             // Its own lock, never held with the frame's: the window's sink
             // may wait on the GUI thread, which takes the frame's lock to
@@ -307,7 +315,9 @@ void Backend::ensurePlayer() {
                     m_output->setVideoFrame(frame);
             }
             if (size.isValid())
-                QMetaObject::invokeMethod(this, [this, size] {
+                QMetaObject::invokeMethod(this, [this, size, upright]() mutable {
+                    if (upright && m_videoTurned)
+                        size.transpose();
                     if (size != m_videoSize) {
                         m_videoSize = size;
                         emit videoSizeChanged();
@@ -321,8 +331,10 @@ void Backend::ensurePlayer() {
     });
 
     connect(m_player, &QMediaPlayer::playbackStateChanged, this, [this] {
-        if (playing() && m_boosted)
-            m_boostTimer.start();
+        if (playing() && (m_boosted || m_volume > 1.0)) {
+            m_boostAgain = true;
+            m_boostTimer.start(250);
+        }
         emit playingChanged();
     });
     connect(m_player, &QMediaPlayer::mediaStatusChanged, this, &Backend::onStatus);
@@ -472,6 +484,7 @@ void Backend::resetFile() {
     // KeepLastFrame ignores an empty frame, so the window clears it itself.
     emit pictureCleared();
     m_videoSize = QSize();
+    m_videoTurned = false;
     m_probe = probe::Info();
     m_probed = false;
     m_tracksReady = false;
@@ -594,24 +607,27 @@ void Backend::loadPicture(const QString &item) {
 void Backend::readPicture() {
     const QString path = filePath();
     const quint64 generation = m_generation;
+    const int revision = m_revision;
     QPointer<Backend> self(this);
-    (void)QtConcurrent::run([self, path, generation] {
+    (void)QtConcurrent::run([self, path, generation, revision] {
         QEventLoopLocker keepRunning;
         const picture::Info info = picture::read(path);
-        QMetaObject::invokeMethod(qApp, [self, info, generation] {
+        QMetaObject::invokeMethod(qApp, [self, info, generation, revision] {
             if (self)
-                self->onPictureRead(info, generation);
+                self->onPictureRead(info, generation, revision);
         }, Qt::QueuedConnection);
     });
 }
 
-void Backend::onPictureRead(const picture::Info &info, quint64 generation) {
-    if (generation != m_generation || !m_picture)
+// Only the latest read of the latest save counts: two reads of a file an
+// editor saved twice can finish in either order.
+void Backend::onPictureRead(const picture::Info &info, quint64 generation, int revision) {
+    if (generation != m_generation || revision != m_revision || !m_picture)
         return;
     m_pictureInfo = info;
     if (!info.ok())
         setError(Problem::PictureFormat);
-    else if (m_problem == Problem::PictureBroken && m_revision > 0)
+    else if ((m_problem == Problem::PictureBroken || m_problem == Problem::PictureFormat) && m_revision > 0)
         setError(Problem::None);  // an editor has finished writing it
     buildInfo();
     emit pictureChanged();
@@ -1006,7 +1022,16 @@ void Backend::updateMetadata() {
         cover.save(&buffer, "JPG", 90);
         m_coverArt = "data:image/jpeg;base64," + QString::fromLatin1(bytes.toBase64());
     }
-    const QSize resolution = metadata.value(QMediaMetaData::Resolution).toSize();
+    QSize resolution = metadata.value(QMediaMetaData::Resolution).toSize();
+    m_videoTurned = std::abs(metadata.value(QMediaMetaData::Orientation).toInt()) % 180 == 90;
+    if (m_videoTurned) {
+        // A frame that came first was measured before the turn was known.
+        if (!m_videoSize.isEmpty() && m_videoSize == resolution) {
+            m_videoSize.transpose();
+            emit videoSizeChanged();
+        }
+        resolution.transpose();
+    }
     if (resolution.isValid() && m_videoSize.isEmpty() && m_player->hasVideo()) {
         m_videoSize = resolution;
         emit videoSizeChanged();
@@ -1119,40 +1144,44 @@ void Backend::applyVolume() {
                                                     QtAudio::LinearVolumeScale)));
     m_audio->setMuted(m_muted);
     if (m_volume > 1.0 || m_boosted)
-        m_boostTimer.start();
+        m_boostTimer.start(250);
 }
 
 // Qt's output stops at the file's own level. Past it, the stream's volume in
 // PipeWire is raised, as a mixer would, and set back once it isn't needed.
+// Just after playing starts the stream may not be there yet, so it's set
+// once more a moment later.
 void Backend::applyBoost() {
     if (!m_audio)
         return;
+    // One wpctl at a time, and the latest volume last: two left running
+    // could finish in either order.
+    if (m_boostRunning) {
+        m_boostPending = true;
+        return;
+    }
     const double gain = std::max(1.0, m_volume);
-    m_boosted = gain > 1.0;
-    const quint64 generation = ++m_boostGeneration;
-    auto *dump = new QProcess(this);
-    connect(dump, &QProcess::finished, this, [this, dump, gain, generation] {
-        dump->deleteLater();
-        if (generation != m_boostGeneration)
-            return;
-        const QJsonArray objects = QJsonDocument::fromJson(dump->readAllStandardOutput()).array();
-        QHash<qint64, QJsonObject> props;
-        for (const QJsonValue &object : objects)
-            props.insert(object["id"].toInteger(), object["info"]["props"].toObject());
-        const qint64 pid = QCoreApplication::applicationPid();
-        for (auto it = props.cbegin(); it != props.cend(); ++it) {
-            if (it->value("media.class").toString() != "Stream/Output/Audio" || !it->contains("client.id"))
-                continue;
-            // The stream names its process, or its client does.
-            QJsonValue owner = it->value("application.process.id");
-            if (owner.isUndefined())
-                owner = props.value(it->value("client.id").toInteger()).value("application.process.id");
-            if (owner.toVariant().toLongLong() == pid)
-                QProcess::startDetached("wpctl", {"set-volume", QString::number(it.key()), QString::number(gain, 'f', 2)});
-        }
+    m_boostRunning = true;
+    auto *wpctl = new QProcess(this);
+    auto done = [this, wpctl] {
+        wpctl->deleteLater();
+        m_boostRunning = false;
+        if (std::exchange(m_boostPending, false))
+            applyBoost();
+    };
+    connect(wpctl, &QProcess::finished, this, done);
+    connect(wpctl, &QProcess::errorOccurred, this, [done](QProcess::ProcessError error) {
+        if (error == QProcess::FailedToStart)
+            done();
     });
-    connect(dump, &QProcess::errorOccurred, dump, &QObject::deleteLater);
-    dump->start("pw-dump", {});
+    wpctl->start("wpctl", {"set-volume", "-p", QString::number(QCoreApplication::applicationPid()),
+                           QString::number(gain, 'f', 2)});
+    if (m_boostAgain) {
+        m_boostAgain = false;
+        m_boostTimer.start(1500);
+        return;
+    }
+    m_boosted = gain > 1.0;
 }
 
 void Backend::togglePlay() {
@@ -1320,6 +1349,10 @@ QString Backend::kindOf(const QString &path) const {
     case playlist::Kind::Audio: return QStringLiteral("audio");
     default: return {};
     }
+}
+
+QString Backend::fileStamp(const QString &path) const {
+    return QString::number(QFileInfo(path).lastModified().toMSecsSinceEpoch());
 }
 
 bool Backend::go(int index) {
@@ -1521,12 +1554,15 @@ bool Backend::trash() {
 bool Backend::undoTrash() {
     if (m_trashed.isEmpty())
         return false;
-    const Trashed item = m_trashed.takeLast();
+    // Kept until it's back, so another try works once what was in its way
+    // has gone.
+    const Trashed item = m_trashed.last();
     const QString name = QFileInfo(item.path).fileName();
     if (QFileInfo::exists(item.path) || !QFile::rename(item.inTrash, item.path)) {
         emit notice(tr("Could not put %1 back.").arg(name));
         return false;
     }
+    m_trashed.removeLast();
     // The Trash's record of it, in info/ beside files/, goes too.
     const QFileInfo trashed(item.inTrash);
     QFile::remove(trashed.absolutePath() + "/../info/" + trashed.fileName() + ".trashinfo");
@@ -1592,8 +1628,11 @@ void Backend::startPreviews() {
     if (!m_previewsWanted || !m_source.isLocalFile() || !m_seekable || !m_hasVideo || m_duration <= 0)
         return;
     QSize size = m_videoSize;
-    if (const probe::Stream *video = m_probe.video(); size.isEmpty() && video)
+    if (const probe::Stream *video = m_probe.video(); size.isEmpty() && video) {
         size = QSize(video->width, video->height);
+        if (std::abs(video->rotation) % 180 == 90)
+            size.transpose();
+    }
     if (size.isEmpty())
         return;
     m_previewsWanted = false;

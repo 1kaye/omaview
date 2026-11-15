@@ -20,7 +20,8 @@ bool picture(const QString &path);
 // album doesn't show its cover.jpg as a track.
 QStringList siblings(const QString &path);
 // A folder's files, in natural order: its pictures and videos when it has
-// pictures, as a camera's does, and otherwise its songs and videos.
+// more pictures than songs, as a camera's does, and otherwise its songs and
+// videos, so an album's cover isn't one of its tracks.
 QStringList folder(const QString &directory);
 
 // Natural, case-insensitive order.

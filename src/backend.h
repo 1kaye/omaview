@@ -190,6 +190,8 @@ public:
     Q_INVOKABLE bool go(int index);
     // "picture", "video" or "audio", for the grid's tiles.
     Q_INVOKABLE QString kindOf(const QString &path) const;
+    // When the file last changed, for the grid's tiles.
+    Q_INVOKABLE QString fileStamp(const QString &path) const;
     Q_INVOKABLE void jumpChapter(int direction);
     Q_INVOKABLE QString chapterAt(qint64 ms) const;
     // The picture, turned as it shows, or the video's frame on screen.
@@ -278,7 +280,7 @@ private:
     void load(int index);
     void loadPicture(const QString &item);
     void readPicture();
-    void onPictureRead(const picture::Info &info, quint64 generation);
+    void onPictureRead(const picture::Info &info, quint64 generation, int revision);
     void clear();
     void resetFile();
     void copyFrame();
@@ -353,12 +355,16 @@ private:
     bool m_ended = false;
     bool m_loaded = false;
     QSize m_videoSize;
+    // The file's metadata turns its frames a quarter, as a phone's does.
+    bool m_videoTurned = false;
     double m_volume = 1.0;  // perceptual, 0 to maxVolume
     double m_maxVolume = 1.0;
     // The stream's own volume may be raised. True at first, since WirePlumber
     // gives a new stream the volume it last had, a boost included.
     bool m_boosted = true;
-    quint64 m_boostGeneration = 0;
+    bool m_boostAgain = false;
+    bool m_boostRunning = false;
+    bool m_boostPending = false;
     QTimer m_boostTimer;
     bool m_looping = false;
     bool m_holdPlayback = false;

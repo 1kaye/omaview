@@ -378,7 +378,7 @@ private slots:
             folder << QFileInfo(path).fileName();
         QCOMPARE(folder, photos);
         QTemporaryDir album;
-        for (const char *name : {"2 b.flac", "1 a.flac", "live.mkv"})
+        for (const char *name : {"2 b.flac", "1 a.flac", "live.mkv", "cover.jpg"})
             QVERIFY(write(album.filePath(name), "x"));
         folder.clear();
         for (const QString &path : playlist::folder(album.path()))
@@ -427,6 +427,23 @@ private slots:
         QVERIFY(!picture::read(dir.filePath("broken.png")).ok());
     }
 
+    void aPhonesPortraitClipIsTall() {
+        // Stored on its side with a display matrix, as a phone writes it.
+        QTemporaryDir state;
+        const QString turned = state.filePath("portrait.mp4");
+        QCOMPARE(QProcess::execute("ffmpeg", {"-v", "error", "-y", "-display_rotation", "90", "-i", m_clip,
+                                              "-c", "copy", turned}), 0);
+        QCOMPARE(probe::run(turned).video()->rotation % 180 != 0, true);
+        Backend::Options options;
+        options.positionsPath = state.filePath("positions.json");
+        options.audio = false;
+        options.previews = false;
+        Backend backend(options);
+        backend.open({turned});
+        QTRY_VERIFY_WITH_TIMEOUT(backend.videoSize().isValid(), 10000);
+        QVERIFY(backend.videoSize().height() > backend.videoSize().width());
+    }
+
     void aFolderWaitsOnlyOnItsFirstFile() {
         // A folder opening on a picture: the video picked after it plays.
         QTemporaryDir state, folder;
@@ -439,7 +456,7 @@ private slots:
         Backend backend(options);
         QSignalSpy opened(&backend, &Backend::folderOpened);
         backend.open({folder.path()});
-        QCOMPARE(opened.count(), 1);
+        QTRY_COMPARE(opened.count(), 1);
         QVERIFY(backend.isPicture());
         QVERIFY(backend.go(1));
         QTRY_VERIFY_WITH_TIMEOUT(backend.playing(), 10000);
@@ -447,7 +464,7 @@ private slots:
         QTemporaryDir empty;
         QSignalSpy nothing(&backend, &Backend::nothingToOpen);
         backend.open({empty.path()});
-        QCOMPARE(nothing.count(), 1);
+        QTRY_COMPARE(nothing.count(), 1);
     }
 
     void aPictureNeverStartsThePlayer() {
@@ -545,6 +562,11 @@ private slots:
             QVERIFY(QFile::exists(home.filePath("data/Trash/info/b.png.trashinfo")));
             QCOMPARE(backend.fileName(), QString("c.png"));
             QCOMPARE(backend.playlistCount(), 2);
+            // Something in its way keeps it in the Trash, and Ctrl+Z works
+            // again once that has gone.
+            QVERIFY(write(home.filePath("photos/b.png"), "in the way"));
+            QVERIFY(!backend.undoTrash());
+            QVERIFY(QFile::remove(home.filePath("photos/b.png")));
             // Ctrl+Z puts it back, where it was, and shows it again.
             QVERIFY(backend.undoTrash());
             QVERIFY(QFile::exists(home.filePath("photos/b.png")));

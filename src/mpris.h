@@ -57,7 +57,7 @@ public:
     bool hasTrackList() const { return false; }
     QString identity() const { return QStringLiteral("Media Viewer"); }
     QString desktopEntry() const { return QStringLiteral("omaview"); }
-    QStringList supportedUriSchemes() const { return {"file", "http", "https"}; }
+    QStringList supportedUriSchemes() const { return {"file"}; }
     QStringList supportedMimeTypes() const { return {"video/mp4", "video/x-matroska", "video/webm", "audio/mpeg"}; }
 
 public slots:

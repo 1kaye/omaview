@@ -120,7 +120,14 @@ ApplicationWindow {
         return parts.join("  ·  ")
     }
     function showLevel(speed) {
+        levelOsd.message = ""
         levelOsd.speed = speed
+        levelOsd.shown = true
+        levelTimer.restart()
+    }
+    // What came of something asked for: saved, copied, or why it failed.
+    function showMessage(text) {
+        levelOsd.message = text
         levelOsd.shown = true
         levelTimer.restart()
     }
@@ -142,7 +149,8 @@ ApplicationWindow {
         height = Math.max(minimumHeight, Math.round(naturalHeight * scale))
     }
     function sizeToMedia() {
-        if (sized || fullscreen || !backend.hasMedia || backend.error !== "")
+        // A folder's first file, behind its grid, waits until it is picked.
+        if (sized || fullscreen || gridShown || !backend.hasMedia || backend.error !== "")
             return
         if (backend.isPicture) {
             if (pictureView.ready)
@@ -184,6 +192,7 @@ ApplicationWindow {
                 videoLoader.item.clearOutput()
         }
         function onFolderOpened() { win.gridShown = true }
+        function onNotice(text) { win.showMessage(text) }
         function onNothingToOpen() { win.opening = false }
         function onErrorChanged() {
             if (backend.error !== "")
@@ -654,11 +663,12 @@ ApplicationWindow {
             objectName: "levelOsd"
             property bool shown: false
             property bool speed: false
+            property string message
             visible: opacity > 0
             opacity: shown ? 1 : 0
             Behavior on opacity { NumberAnimation { duration: 180 } }
             anchors.centerIn: parent
-            width: levelColumn.implicitWidth + 52
+            width: Math.min(parent.width - 40, levelColumn.implicitWidth + 52)
             height: levelColumn.implicitHeight + 32
             radius: theme.radius
             color: Qt.rgba(theme.background.r, theme.background.g, theme.background.b, 0.85)
@@ -667,7 +677,19 @@ ApplicationWindow {
                 anchors.centerIn: parent
                 spacing: 8
                 Text {
+                    objectName: "levelMessage"
+                    visible: levelOsd.message !== ""
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    width: Math.min(implicitWidth, levelOsd.parent.width - 92)
+                    text: levelOsd.message
+                    color: theme.foreground
+                    font.pixelSize: 17
+                    wrapMode: Text.Wrap
+                    horizontalAlignment: Text.AlignHCenter
+                }
+                Text {
                     objectName: "levelValue"
+                    visible: levelOsd.message === ""
                     anchors.horizontalCenter: parent.horizontalCenter
                     text: levelOsd.speed
                           ? backend.rate.toLocaleString(Qt.locale(), 'f', backend.rate * 4 % 4 === 0 ? 0 : 2) + "×"
@@ -678,6 +700,7 @@ ApplicationWindow {
                     font.weight: Font.DemiBold
                 }
                 Text {
+                    visible: levelOsd.message === ""
                     anchors.horizontalCenter: parent.horizontalCenter
                     text: levelOsd.speed ? qsTr("Speed") : qsTr("Volume")
                     color: theme.colors.muted
@@ -713,13 +736,22 @@ ApplicationWindow {
         active: win.gridShown
         sourceComponent: MediaGrid {
             tileSize: win.gridTileSize
+            // The window takes the shape of the file picked, once it has
+            // one; the one already open, behind the grid, has it now.
             onPicked: index => {
+                const opened = backend.go(index)
                 win.gridShown = false
-                // The file already open plays when picked, as any other would.
-                if (!backend.go(index) && win.playable && !backend.playing)
-                    backend.togglePlay()
+                if (!opened) {
+                    win.sizeToMedia()
+                    // The file already open plays when picked, as any other would.
+                    if (win.playable && !backend.playing)
+                        backend.togglePlay()
+                }
             }
-            onClosed: win.gridShown = false
+            onClosed: {
+                win.gridShown = false
+                win.sizeToMedia()
+            }
         }
         onLoaded: item.forceActiveFocus()
     }

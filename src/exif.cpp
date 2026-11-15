@@ -125,37 +125,28 @@ QByteArray fromJpeg(const QByteArray &data) {
     return {};
 }
 
-// PNG's eXIf chunk holds the TIFF structure as it is.
-QByteArray fromPng(const QByteArray &data) {
-    qsizetype at = 8;
-    while (at + 12 <= data.size()) {
-        const auto *p = reinterpret_cast<const uchar *>(data.constData() + at);
-        const quint32 length = quint32(p[0]) << 24 | quint32(p[1]) << 16 | quint32(p[2]) << 8 | p[3];
-        const QByteArray type = data.mid(at + 4, 4);
-        if (type == "eXIf")
-            return data.mid(at + 8, length);
-        if (type == "IEND" || quint64(length) + 12 > quint64(data.size() - at))
+// The one chunk of a PNG (eXIf, which holds the TIFF structure as it is) or
+// a WebP (EXIF, in its RIFF container, sometimes with JPEG's prefix), found
+// by walking the chunk headers with seeks rather than reading the pixels.
+QByteArray chunk(QFile &file, bool webp) {
+    qint64 at = webp ? 12 : 8;
+    while (at + 8 <= file.size() && file.seek(at)) {
+        const QByteArray header = file.read(8);
+        if (header.size() < 8)
             break;
-        at += 12 + length;
-    }
-    return {};
-}
-
-// WebP's EXIF chunk, in its RIFF container, sometimes with JPEG's prefix.
-QByteArray fromWebp(const QByteArray &data) {
-    qsizetype at = 12;
-    while (at + 8 <= data.size()) {
-        const auto *p = reinterpret_cast<const uchar *>(data.constData() + at + 4);
-        const quint32 length = quint32(p[0]) | quint32(p[1]) << 8 | quint32(p[2]) << 16 | quint32(p[3]) << 24;
-        if (data.mid(at, 4) == "EXIF") {
-            QByteArray tiff = data.mid(at + 8, length);
+        const auto *p = reinterpret_cast<const uchar *>(header.constData());
+        const quint32 length = webp ? quint32(p[4]) | quint32(p[5]) << 8 | quint32(p[6]) << 16 | quint32(p[7]) << 24
+                                    : quint32(p[0]) << 24 | quint32(p[1]) << 16 | quint32(p[2]) << 8 | p[3];
+        const QByteArray type = webp ? header.left(4) : header.mid(4, 4);
+        if (type == (webp ? "EXIF" : "eXIf")) {
+            QByteArray tiff = file.read(std::min<qint64>(length, 1024 * 1024));
             if (tiff.startsWith(QByteArray("Exif\0\0", 6)))
                 tiff.remove(0, 6);
             return tiff;
         }
-        if (quint64(length) + 8 > quint64(data.size() - at))
+        if (!webp && type == "IEND")
             break;
-        at += 8 + length + (length & 1);
+        at += webp ? 8 + qint64(length) + (length & 1) : 12 + qint64(length);
     }
     return {};
 }
@@ -204,24 +195,19 @@ Tags read(const QString &path) {
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly))
         return {};
-    // A JPEG's EXIF is at its start, but PNG and WebP may keep theirs after
-    // the pixels, so those are mapped whole rather than read.
-    const qint64 size = file.size();
-    const uchar *mapped = size > 16 ? file.map(0, size) : nullptr;
-    if (!mapped)
-        return {};
-    const QByteArray data = QByteArray::fromRawData(reinterpret_cast<const char *>(mapped), qsizetype(size));
-    Tags tags;
-    if (data.startsWith("\xFF\xD8"))
-        tags = parse(fromJpeg(data));
-    else if (data.startsWith("\x89PNG\r\n\x1a\n"))
-        tags = parse(fromPng(data));
-    else if (data.startsWith("RIFF") && data.mid(8, 4) == "WEBP")
-        tags = parse(fromWebp(data));
-    else if (data.startsWith("II*") || data.startsWith(QByteArray("MM\0*", 4)))
-        tags = parse(data);
-    file.unmap(const_cast<uchar *>(mapped));
-    return tags;
+    // Only what holds the tags is read: a JPEG's start, a PNG's or WebP's one
+    // chunk, a TIFF's first megabyte. Read, not mapped: a file another program
+    // cuts short as it saves would crash a mapping with SIGBUS.
+    const QByteArray head = file.peek(16);
+    if (head.startsWith("\xFF\xD8"))
+        return parse(fromJpeg(file.read(256 * 1024)));
+    if (head.startsWith("\x89PNG\r\n\x1a\n"))
+        return parse(chunk(file, false));
+    if (head.startsWith("RIFF") && head.mid(8, 4) == "WEBP")
+        return parse(chunk(file, true));
+    if (head.startsWith("II*") || head.startsWith(QByteArray("MM\0*", 4)))
+        return parse(file.read(1024 * 1024));
+    return {};
 }
 
 }  // namespace exif

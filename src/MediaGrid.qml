@@ -44,8 +44,9 @@ FocusScope {
         readonly property int columns: Math.max(1, Math.floor(width / (grid.tileSize + gap)))
         readonly property real tileWidth: Math.floor(width / columns) - gap
         readonly property real tileHeight: Math.round(tileWidth * 3 / 4)
-        // Decoded at sizes in steps, so a zoom doesn't decode every tile again.
-        readonly property int decodeWidth: Math.ceil(tileWidth * Screen.devicePixelRatio / 160) * 160
+        // Decoded at sizes in steps, so a zoom doesn't decode every tile again;
+        // logical pixels, which Qt multiplies by the screen's ratio itself.
+        readonly property int decodeWidth: Math.ceil(tileWidth / 80) * 80
         // A pick made with the keys scrolls into view; one made with the
         // pointer is already there.
         property bool byKeys: false
@@ -99,6 +100,9 @@ FocusScope {
             required property string modelData
             required property int index
             readonly property string kind: backend.kindOf(modelData)
+            // The file as it is now: a tile for a file edited since is a new
+            // one, not Qt's cached copy of the old.
+            readonly property string address: backend.fileStamp(modelData) + "/" + encodeURIComponent(modelData)
             readonly property bool wanted: kind === "video" && view.currentIndex === index
             readonly property bool previewing: wanted && dwell.done
             onWantedChanged: dwell.done = false
@@ -118,7 +122,7 @@ FocusScope {
                 Image {
                     anchors.fill: parent
                     visible: tile.kind !== "audio"
-                    source: tile.kind === "audio" ? "" : "image://thumbnail/" + encodeURIComponent(tile.modelData)
+                    source: tile.kind === "audio" ? "" : "image://thumbnail/" + tile.address
                     sourceSize: Qt.size(view.decodeWidth, Math.round(view.decodeWidth * 3 / 4))
                     fillMode: Image.PreserveAspectCrop
                     asynchronous: true
@@ -156,7 +160,7 @@ FocusScope {
                         property bool started: false
                         visible: started
                         onStatusChanged: if (status === Image.Ready) started = true
-                        source: "image://thumbnail/frame/" + frame + "/" + encodeURIComponent(tile.modelData)
+                        source: "image://thumbnail/frame/" + frame + "/" + tile.address
                         fillMode: Image.PreserveAspectCrop
                         asynchronous: true
                         retainWhileLoading: true
