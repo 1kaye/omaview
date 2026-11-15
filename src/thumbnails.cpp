@@ -103,11 +103,13 @@ ThumbnailProvider::~ThumbnailProvider() {
 
 QQuickImageResponse *ThumbnailProvider::requestImageResponse(const QString &id, const QSize &requestedSize) {
     int frame = -1;
+    // [frame/<n>/]<when the file last changed>/<percent-encoded path>
     QString path = id;
-    if (id.startsWith(QLatin1String("frame/"))) {
-        frame = id.section('/', 1, 1).toInt();
-        path = id.section('/', 2);
+    if (path.startsWith(QLatin1String("frame/"))) {
+        frame = path.section('/', 1, 1).toInt();
+        path = path.section('/', 2);
     }
+    path = path.section('/', 1);
     auto *response = new Response(QUrl::fromPercentEncoding(path.toUtf8()), requestedSize, frame, m_stopping);
     m_pool.start(response);
     return response;

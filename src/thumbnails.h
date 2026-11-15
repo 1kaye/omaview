@@ -5,9 +5,10 @@
 #include <atomic>
 #include <memory>
 
-// image://thumbnail/<percent-encoded path>: a picture decoded small, or a
-// video's poster frame, for the grid; image://thumbnail/frame/<n>/<path>, a
-// video's nth preview frame. Off the GUI thread, several at a time.
+// image://thumbnail/<stamp>/<percent-encoded path>: a picture decoded small,
+// or a video's poster frame, for the grid; image://thumbnail/frame/<n>/
+// <stamp>/<path>, a video's nth preview frame. The stamp is when the file
+// last changed. Off the GUI thread, several at a time.
 class ThumbnailProvider : public QQuickAsyncImageProvider {
 public:
     ThumbnailProvider();

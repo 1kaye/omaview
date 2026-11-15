@@ -607,19 +607,22 @@ void Backend::loadPicture(const QString &item) {
 void Backend::readPicture() {
     const QString path = filePath();
     const quint64 generation = m_generation;
+    const int revision = m_revision;
     QPointer<Backend> self(this);
-    (void)QtConcurrent::run([self, path, generation] {
+    (void)QtConcurrent::run([self, path, generation, revision] {
         QEventLoopLocker keepRunning;
         const picture::Info info = picture::read(path);
-        QMetaObject::invokeMethod(qApp, [self, info, generation] {
+        QMetaObject::invokeMethod(qApp, [self, info, generation, revision] {
             if (self)
-                self->onPictureRead(info, generation);
+                self->onPictureRead(info, generation, revision);
         }, Qt::QueuedConnection);
     });
 }
 
-void Backend::onPictureRead(const picture::Info &info, quint64 generation) {
-    if (generation != m_generation || !m_picture)
+// Only the latest read of the latest save counts: two reads of a file an
+// editor saved twice can finish in either order.
+void Backend::onPictureRead(const picture::Info &info, quint64 generation, int revision) {
+    if (generation != m_generation || revision != m_revision || !m_picture)
         return;
     m_pictureInfo = info;
     if (!info.ok())
@@ -1151,9 +1154,28 @@ void Backend::applyVolume() {
 void Backend::applyBoost() {
     if (!m_audio)
         return;
+    // One wpctl at a time, and the latest volume last: two left running
+    // could finish in either order.
+    if (m_boostRunning) {
+        m_boostPending = true;
+        return;
+    }
     const double gain = std::max(1.0, m_volume);
-    QProcess::startDetached("wpctl", {"set-volume", "-p", QString::number(QCoreApplication::applicationPid()),
-                                      QString::number(gain, 'f', 2)});
+    m_boostRunning = true;
+    auto *wpctl = new QProcess(this);
+    auto done = [this, wpctl] {
+        wpctl->deleteLater();
+        m_boostRunning = false;
+        if (std::exchange(m_boostPending, false))
+            applyBoost();
+    };
+    connect(wpctl, &QProcess::finished, this, done);
+    connect(wpctl, &QProcess::errorOccurred, this, [done](QProcess::ProcessError error) {
+        if (error == QProcess::FailedToStart)
+            done();
+    });
+    wpctl->start("wpctl", {"set-volume", "-p", QString::number(QCoreApplication::applicationPid()),
+                           QString::number(gain, 'f', 2)});
     if (m_boostAgain) {
         m_boostAgain = false;
         m_boostTimer.start(1500);
@@ -1327,6 +1349,10 @@ QString Backend::kindOf(const QString &path) const {
     case playlist::Kind::Audio: return QStringLiteral("audio");
     default: return {};
     }
+}
+
+QString Backend::fileStamp(const QString &path) const {
+    return QString::number(QFileInfo(path).lastModified().toMSecsSinceEpoch());
 }
 
 bool Backend::go(int index) {
@@ -1528,12 +1554,15 @@ bool Backend::trash() {
 bool Backend::undoTrash() {
     if (m_trashed.isEmpty())
         return false;
-    const Trashed item = m_trashed.takeLast();
+    // Kept until it's back, so another try works once what was in its way
+    // has gone.
+    const Trashed item = m_trashed.last();
     const QString name = QFileInfo(item.path).fileName();
     if (QFileInfo::exists(item.path) || !QFile::rename(item.inTrash, item.path)) {
         emit notice(tr("Could not put %1 back.").arg(name));
         return false;
     }
+    m_trashed.removeLast();
     // The Trash's record of it, in info/ beside files/, goes too.
     const QFileInfo trashed(item.inTrash);
     QFile::remove(trashed.absolutePath() + "/../info/" + trashed.fileName() + ".trashinfo");

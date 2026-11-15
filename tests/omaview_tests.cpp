@@ -562,6 +562,11 @@ private slots:
             QVERIFY(QFile::exists(home.filePath("data/Trash/info/b.png.trashinfo")));
             QCOMPARE(backend.fileName(), QString("c.png"));
             QCOMPARE(backend.playlistCount(), 2);
+            // Something in its way keeps it in the Trash, and Ctrl+Z works
+            // again once that has gone.
+            QVERIFY(write(home.filePath("photos/b.png"), "in the way"));
+            QVERIFY(!backend.undoTrash());
+            QVERIFY(QFile::remove(home.filePath("photos/b.png")));
             // Ctrl+Z puts it back, where it was, and shows it again.
             QVERIFY(backend.undoTrash());
             QVERIFY(QFile::exists(home.filePath("photos/b.png")));

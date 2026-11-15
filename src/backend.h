@@ -190,6 +190,8 @@ public:
     Q_INVOKABLE bool go(int index);
     // "picture", "video" or "audio", for the grid's tiles.
     Q_INVOKABLE QString kindOf(const QString &path) const;
+    // When the file last changed, for the grid's tiles.
+    Q_INVOKABLE QString fileStamp(const QString &path) const;
     Q_INVOKABLE void jumpChapter(int direction);
     Q_INVOKABLE QString chapterAt(qint64 ms) const;
     // The picture, turned as it shows, or the video's frame on screen.
@@ -278,7 +280,7 @@ private:
     void load(int index);
     void loadPicture(const QString &item);
     void readPicture();
-    void onPictureRead(const picture::Info &info, quint64 generation);
+    void onPictureRead(const picture::Info &info, quint64 generation, int revision);
     void clear();
     void resetFile();
     void copyFrame();
@@ -361,6 +363,8 @@ private:
     // gives a new stream the volume it last had, a boost included.
     bool m_boosted = true;
     bool m_boostAgain = false;
+    bool m_boostRunning = false;
+    bool m_boostPending = false;
     QTimer m_boostTimer;
     bool m_looping = false;
     bool m_holdPlayback = false;
