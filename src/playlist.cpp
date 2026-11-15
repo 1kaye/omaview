@@ -5,7 +5,6 @@
 #include <QFileInfo>
 #include <QImageReader>
 #include <QSet>
-#include <QUrl>
 #include <algorithm>
 
 namespace playlist {
@@ -43,10 +42,7 @@ const QSet<QString> &pictureExtensions() {
 }
 
 QString suffixOf(const QString &path) {
-    // A URL's own path, so https://…/photo.jpg?w=800 is a picture.
-    const QUrl url(path);
-    const QString name = url.scheme().size() > 1 ? url.path() : path;
-    return QFileInfo(name).suffix().toLower();
+    return QFileInfo(path).suffix().toLower();
 }
 
 }  // namespace
@@ -91,6 +87,22 @@ QStringList siblings(const QString &path) {
     const QString self = file.absoluteFilePath();
     if (!found.contains(self))
         found << self;
+    sort(found);
+    return found;
+}
+
+QStringList folder(const QString &directory) {
+    QStringList found;
+    bool pictures = false;
+    for (const QFileInfo &entry : QDir(directory).entryInfoList(QDir::Files | QDir::Readable)) {
+        const Kind each = kind(entry.fileName());
+        if (each == Kind::None)
+            continue;
+        pictures = pictures || each == Kind::Picture;
+        found << entry.absoluteFilePath();
+    }
+    const Kind left = pictures ? Kind::Audio : Kind::Picture;
+    found.removeIf([left](const QString &path) { return kind(path) == left; });
     sort(found);
     return found;
 }

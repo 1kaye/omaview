@@ -2,14 +2,15 @@ import QtQuick
 import QtQuick.Layouts
 import "Format.js" as Format
 
-// What Tab brings in: the file across the top and the transport across the
+// The controls, shown from the start and hidden or brought back with Tab: the file across the top and the transport across the
 // bottom, over gradients so they read on any picture. A picture's transport
 // steps, zooms and turns rather than plays.
 Item {
     id: overlay
     signal toggleFullscreen()
+    signal showKeys()
+    signal showGrid()
     property bool fullscreen: false
-    property var keys
     property Item picture
     // Narrow windows keep what matters most: play, the time, fullscreen.
     readonly property bool roomy: width >= 760
@@ -48,28 +49,32 @@ Item {
             font.pixelSize: 17
             font.weight: Font.Medium
             elide: Text.ElideRight
-            Layout.maximumWidth: overlay.width * 0.5
+            Layout.maximumWidth: overlay.width - 140
         }
-        Text {
-            text: backend.summary
-            color: "#9a9aa0"
-            font.pixelSize: 13
-            elide: Text.ElideRight
-            Layout.fillWidth: true
-        }
+        Item { Layout.fillWidth: true }
         ControlButton {
-            visible: (backend.isPicture || backend.hasVideo) && overlay.medium
+            visible: backend.isPicture || backend.hasVideo
+            subtle: true
             icon: "copy"
-            text: backend.isPicture ? qsTr("Copy picture") : qsTr("Copy frame")
-            keys: overlay.keys.copy
+            label: backend.isPicture ? qsTr("Copy picture") : qsTr("Copy frame")
+            shortcut: "Ctrl+C"
             onClicked: backend.copy()
         }
         ControlButton {
-            visible: backend.canEdit && (backend.isPicture || backend.hasVideo) && overlay.roomy
+            visible: backend.canEdit && (backend.isPicture || backend.hasVideo)
+            subtle: true
             icon: backend.isPicture ? "edit" : "scissors"
-            text: backend.isPicture ? qsTr("Edit in Omasnap") : qsTr("Trim in Omacut")
-            keys: overlay.keys.edit
+            label: qsTr("Edit")
+            shortcut: "E"
             onClicked: backend.edit()
+        }
+        ControlButton {
+            objectName: "keysButton"
+            subtle: true
+            icon: "help"
+            label: qsTr("Show or hide the shortcuts")
+            shortcut: "?"
+            onClicked: overlay.showKeys()
         }
     }
 
@@ -118,7 +123,6 @@ Item {
             ControlButton {
                 text: overlay.picture && !overlay.picture.fitted
                       ? Math.round(overlay.picture.ratio * 100).toLocaleString(Qt.locale(), 'f', 0) + "%" : qsTr("Fit")
-                keys: overlay.keys.fit
                 onClicked: overlay.picture.fitted ? overlay.picture.actualSize() : overlay.picture.reset()
             }
             ControlButton {
@@ -128,14 +132,20 @@ Item {
             ControlButton {
                 visible: overlay.medium
                 icon: "turn"
-                keys: overlay.keys.turn
                 onClicked: backend.rotate(90)
             }
             ControlButton {
                 visible: overlay.medium
                 icon: "trash"
-                keys: overlay.keys.trash
                 onClicked: backend.trash()
+            }
+            ControlButton {
+                objectName: "gridButton"
+                visible: backend.playlistCount > 1
+                icon: "grid"
+                label: qsTr("Every file in the folder")
+                shortcut: "Ctrl+M"
+                onClicked: overlay.showGrid()
             }
             ControlButton {
                 icon: overlay.fullscreen ? "unfull" : "full"
@@ -188,14 +198,23 @@ Item {
                     color: Qt.rgba(1, 1, 1, 0.2)
                     Rectangle {
                         height: parent.height
-                        width: parent.width * (backend.muted ? 0 : backend.volume)
+                        width: parent.width * (backend.muted ? 0 : backend.volume / backend.maxVolume)
                         color: "white"
+                    }
+                    // The file's own level; past it is a boost.
+                    Rectangle {
+                        visible: backend.maxVolume > 1
+                        x: parent.width / backend.maxVolume - 1
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: 2
+                        height: 10
+                        color: Qt.rgba(1, 1, 1, 0.6)
                     }
                 }
                 MouseArea {
                     anchors.fill: parent
                     preventStealing: true
-                    function set(x) { backend.setVolume(Math.max(0, Math.min(1, x / width))) }
+                    function set(x) { backend.setVolume(Math.max(0, Math.min(1, x / width)) * backend.maxVolume) }
                     onPressed: mouse => set(mouse.x)
                     onPositionChanged: mouse => { if (pressed) set(mouse.x) }
                 }
@@ -203,31 +222,42 @@ Item {
             Text {
                 Layout.leftMargin: 10
                 text: backend.duration > 0 ? Format.clock(backend.position) + "  /  " + Format.clock(backend.duration)
-                                           : (backend.seekable ? Format.clock(backend.position) : qsTr("Live"))
+                                           : Format.clock(backend.position)
                 color: "white"
                 font.family: "monospace"
                 font.pixelSize: 13
             }
             Item { Layout.fillWidth: true }
             ControlButton {
+                visible: overlay.medium || backend.looping
+                icon: "loop"
+                checked: backend.looping
+                onClicked: backend.toggleLoop()
+            }
+            ControlButton {
                 visible: overlay.medium || backend.rate !== 1
                 text: backend.rate.toLocaleString(Qt.locale(), 'f', backend.rate * 4 % 4 === 0 ? 0 : 2) + "×"
-                keys: overlay.keys.speed
                 onClicked: backend.changeRate(backend.rate >= 2 ? -(backend.rate - 1) : 0.25)
             }
             ControlButton {
                 visible: backend.subtitleChoices > 0 && overlay.medium
                 icon: "subs"
                 text: backend.subtitleLabel !== "" ? backend.subtitleLabel : qsTr("Off")
-                keys: overlay.keys.subtitles
                 onClicked: backend.cycleSubtitles()
             }
             ControlButton {
                 visible: backend.audioTracks > 1 && overlay.roomy
                 icon: "audio"
                 text: backend.audioLabel
-                keys: overlay.keys.audio
                 onClicked: backend.cycleAudio()
+            }
+            ControlButton {
+                objectName: "gridButton"
+                visible: backend.playlistCount > 1
+                icon: "grid"
+                label: qsTr("Every file in the folder")
+                shortcut: "Ctrl+M"
+                onClicked: overlay.showGrid()
             }
             ControlButton {
                 icon: overlay.fullscreen ? "unfull" : "full"

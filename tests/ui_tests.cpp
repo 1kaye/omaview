@@ -20,6 +20,7 @@
 #include "filepicker.h"
 #include "inhibit.h"
 #include "theme.h"
+#include "thumbnails.h"
 #include "translator.h"
 
 namespace {
@@ -101,6 +102,7 @@ class UiTests : public QObject {
         w->engine->rootContext()->setContextProperty("theme", w->theme.get());
         w->engine->rootContext()->setContextProperty("backend", w->backend.get());
         w->engine->rootContext()->setContextProperty("idle", w->idle.get());
+        w->engine->addImageProvider("thumbnail", new ThumbnailProvider);
         w->engine->load(QUrl("qrc:/Main.qml"));
         if (w->engine->rootObjects().isEmpty())
             return w;
@@ -153,6 +155,16 @@ class UiTests : public QObject {
         return w->window->findChild<T *>(name);
     }
 
+    // Through the items as drawn, which reaches a view's delegates.
+    static QQuickItem *findItem(QQuickItem *item, const QString &name) {
+        if (item->objectName() == name)
+            return item;
+        for (QQuickItem *child : item->childItems())
+            if (QQuickItem *found = findItem(child, name))
+                return found;
+        return nullptr;
+    }
+
 private slots:
     void initTestCase() {
         QQuickStyle::setStyle("Material");
@@ -164,6 +176,11 @@ private slots:
         qputenv("XDG_CACHE_HOME", m_dir.filePath("cache").toUtf8());
         qputenv("XDG_STATE_HOME", m_dir.filePath("state").toUtf8());
         qunsetenv("WAYLAND_DISPLAY");
+        // A fresh cache home makes fontconfig read every font the first time
+        // text is drawn, which takes seconds; it happens here, once, rather
+        // than in the middle of a test that has the controls up.
+        QImage warm(16, 16, QImage::Format_ARGB32);
+        QPainter(&warm).drawText(0, 12, "x");
         QVERIFY(makeClip(m_dir.path(), "a-coast.mkv", 8));
         QVERIFY(makeClip(m_dir.path(), "b-pines.mkv", 3));
         m_clip = m_dir.filePath("a-coast.mkv");
@@ -206,20 +223,24 @@ private slots:
         QCOMPARE(w->backend->subtitleChoices(), 1);
         QCOMPARE(w->backend->subtitleLabel(), QString());
 
-        auto *centerValue = find<QQuickItem>(w.get(), "centerValue");
         QTest::keyClick(w->window, Qt::Key_Space);
         QTRY_VERIFY(!w->backend->playing());
-        QCOMPARE(centerValue->property("text").toString(), QString("Paused"));
 
         // Speed and volume say what they became.
+        auto *levelValue = find<QQuickItem>(w.get(), "levelValue");
         QTest::keyClick(w->window, Qt::Key_BracketRight);
         QCOMPARE(w->backend->rate(), 1.25);
-        QCOMPARE(centerValue->property("text").toString(), QString("1.25×"));
+        QCOMPARE(levelValue->property("text").toString(), QString("1.25×"));
         QTest::keyClick(w->window, Qt::Key_Backspace);
         QCOMPARE(w->backend->rate(), 1.0);
         const double volume = w->backend->volume();
         QTest::keyClick(w->window, Qt::Key_Down);
         QCOMPARE(w->backend->volume(), std::round((volume - 0.05) * 100) / 100);
+        // Past the file's own level is a boost, as far as the maximum.
+        w->backend->setVolume(9);
+        QCOMPARE(w->backend->volume(), w->backend->maxVolume());
+        w->backend->setVolume(volume);
+        QTRY_COMPARE(find<QQuickItem>(w.get(), "levelOsd")->opacity(), 1.0);
 
         // Subtitles on with C, drawn by the window at their time.
         QTest::keyClick(w->window, Qt::Key_C);
@@ -258,14 +279,28 @@ private slots:
         QVERIFY(w->backend->position() < stepped);
         QVERIFY(stepped - w->backend->position() <= 60);
 
-        // Tab brings the overlay in, and Esc puts it away.
+        // The controls show from the start; Esc puts them away, and Tab
+        // brings them back.
         auto *overlay = find<QQuickItem>(w.get(), "overlay");
-        QVERIFY(!overlay->property("item").value<QQuickItem *>());
-        QTest::keyClick(w->window, Qt::Key_Tab);
         QTRY_VERIFY(overlay->property("item").value<QQuickItem *>());
         QTRY_COMPARE(overlay->property("item").value<QQuickItem *>()->opacity(), 1.0);
         shot(w.get(), "2-overlay");
+        // Its icons say what they are, and their key, under the pointer.
+        auto *keysButton = findItem(w->window->contentItem(), "keysButton");
+        QVERIFY(keysButton);
+        QTest::mouseMove(w->window, keysButton->mapToScene(QPointF(keysButton->width() / 2, keysButton->height() / 2)).toPoint());
+        QTRY_VERIFY_WITH_TIMEOUT([&] {
+            for (QObject *tip : w->window->findChildren<QObject *>())
+                if (tip->inherits("QQuickToolTipAttached") && tip->property("visible").toBool())
+                    return tip->property("text").toString() == "Show or hide the shortcuts   ?";
+            return false;
+        }(), 3000);
+        QTest::mouseMove(w->window, QPoint(5, w->window->height() / 2));
         QTest::keyClick(w->window, Qt::Key_Escape);
+        QTRY_VERIFY(!overlay->property("item").value<QQuickItem *>());
+        QTest::keyClick(w->window, Qt::Key_Tab);
+        QTRY_VERIFY(overlay->property("item").value<QQuickItem *>());
+        QTest::keyClick(w->window, Qt::Key_Tab);
         QTRY_VERIFY(!overlay->property("item").value<QQuickItem *>());
 
         // I and ? open their cards; Escape closes them.
@@ -307,9 +342,57 @@ private slots:
         QVERIFY(QTest::qWaitForWindowExposed(w->window));
         w->window->requestActivate();
         QVERIFY(QTest::qWaitForWindowActive(w->window));
+        // A folder opens on its grid with nothing playing, not even heard,
+        // until a tile is picked.
+        w->backend->open({QFileInfo(m_clip).absolutePath()});
+        QTRY_VERIFY(w->window->property("gridShown").toBool());
+        QTRY_VERIFY_WITH_TIMEOUT(w->backend->playerReady(), 10000);
+        QTest::qWait(1000);
+        QVERIFY(!w->backend->playing());
+        QTest::keyClick(w->window, Qt::Key_Return);
+        QTRY_VERIFY(!w->window->property("gridShown").toBool());
+        QTRY_VERIFY_WITH_TIMEOUT(w->backend->playing(), 10000);
         w->backend->open({m_clip});
         QTRY_VERIFY_WITH_TIMEOUT(w->backend->playing(), 10000);
         QTRY_VERIFY_WITH_TIMEOUT(w->backend->seekable(), 10000);
+        // In the grid, the video picked flips through frames from across it,
+        // with nothing playing.
+        QTest::keyClick(w->window, Qt::Key_M, Qt::ControlModifier);
+        QVERIFY(!w->backend->playing());
+        QTRY_VERIFY_WITH_TIMEOUT(findItem(w->window->contentItem(), "gridPreview"), 5000);
+        auto *preview = findItem(w->window->contentItem(), "gridPreview");
+        QTRY_VERIFY_WITH_TIMEOUT(preview->property("frame").toInt() >= 2, 20000);
+        QTest::keyClick(w->window, Qt::Key_Escape);
+        QTRY_VERIFY(!w->window->property("gridShown").toBool());
+        // The controls' grid button opens it too.
+        QQuickItem *gridButton = nullptr;
+        QTRY_VERIFY([&] {
+            std::function<QQuickItem *(QQuickItem *)> visible = [&](QQuickItem *item) -> QQuickItem * {
+                if (item->objectName() == "gridButton" && item->isVisible())
+                    return item;
+                for (QQuickItem *child : item->childItems())
+                    if (QQuickItem *found = visible(child))
+                        return found;
+                return nullptr;
+            };
+            gridButton = visible(w->window->contentItem());
+            return gridButton != nullptr;
+        }());
+        QTest::mouseClick(w->window, Qt::LeftButton, {},
+                          gridButton->mapToScene(QPointF(gridButton->width() / 2, gridButton->height() / 2)).toPoint());
+        QTRY_VERIFY(w->window->property("gridShown").toBool());
+        QTest::keyClick(w->window, Qt::Key_Escape);
+        QTRY_VERIFY(!w->window->property("gridShown").toBool());
+        w->backend->play();
+        // Looping, the end goes back to the start rather than stopping.
+        QTest::keyClick(w->window, Qt::Key_R);
+        QVERIFY(w->backend->looping());
+        w->backend->seek(w->backend->duration() - 300);
+        QTRY_VERIFY_WITH_TIMEOUT(w->backend->position() < 1000, 10000);
+        QVERIFY(!w->backend->ended());
+        QVERIFY(w->backend->playing());
+        QTest::keyClick(w->window, Qt::Key_R);
+        QVERIFY(!w->backend->looping());
         w->backend->seek(w->backend->duration() - 300);
         QTRY_VERIFY_WITH_TIMEOUT(w->backend->ended(), 10000);
         QCOMPARE(w->backend->nextName(), QString("b-pines.mkv"));
@@ -328,8 +411,9 @@ private slots:
         QVERIFY(!w->idle->active());
         w->backend->play();
         QCOMPARE(w->backend->nextName(), QString());
+        // N past the last file stays on it, without a word.
         QTest::keyClick(w->window, Qt::Key_N);
-        QTRY_VERIFY(find<QQuickItem>(w.get(), "centerValue")->property("text").toString().contains("last"));
+        QCOMPARE(w->backend->fileName(), QString("b-pines.mkv"));
         QVERIFY2(w->warnings.isEmpty(), qPrintable(w->warnings.join('\n')));
         close(w);
     }
@@ -375,11 +459,12 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(w->backend->playing(), 10000);
         QCOMPARE(w->window->color(), QColor("black"));
         QTest::keyClick(w->window, Qt::Key_Up);
-        auto *centerValue = find<QQuickItem>(w.get(), "centerValue");
-        QCOMPARE(centerValue->property("color").value<QColor>(), QColor("#1e66f5"));
+        auto *levelValue = find<QQuickItem>(w.get(), "levelValue");
+        QCOMPARE(levelValue->property("color").value<QColor>(), QColor("#1e66f5"));
+        // Paused once a frame is up, so the shot has a picture.
+        QTRY_VERIFY_WITH_TIMEOUT(w->backend->currentFrame().isValid(), 10000);
         w->backend->pause();
-        QTRY_VERIFY_WITH_TIMEOUT(w->backend->currentFrame().isValid(), 5000);
-        QTRY_COMPARE(find<QQuickItem>(w.get(), "centerOsd")->opacity(), 1.0);
+        QTRY_COMPARE(find<QQuickItem>(w.get(), "levelOsd")->opacity(), 1.0);
         shot(w.get(), "8-light");
         QVERIFY2(w->warnings.isEmpty(), qPrintable(w->warnings.join('\n')));
         close(w);
@@ -406,10 +491,15 @@ private slots:
         QVERIFY(QTest::qWaitForWindowExposed(w->window));
         w->window->requestActivate();
         QVERIFY(QTest::qWaitForWindowActive(w->window));
+        // Bare, without the controls, so the corner shows.
+        w->window->setProperty("overlayShown", false);
         w->backend->open({photos + "/1-harbour.png"});
         auto *view = find<QQuickItem>(w.get(), "pictureView");
         QTRY_VERIFY_WITH_TIMEOUT(view->property("ready").toBool(), 10000);
         QTRY_COMPARE(w->backend->playlistCount(), 4);
+        // The corner says where it is in the folder, and its name.
+        QTRY_COMPARE(find<QQuickItem>(w.get(), "cornerOsd")->opacity(), 1.0);
+        QTRY_COMPARE(find<QQuickItem>(w.get(), "cornerStatus")->property("text").toString(), QString("1 of 4"));
         // A picture never starts the player, and the window takes its shape.
         QVERIFY(!w->backend->playerReady());
         QTRY_COMPARE(qRound(w->window->width() * 900.0 / w->window->height()), 1600);
@@ -456,6 +546,31 @@ private slots:
         QTest::keyClick(w->window, Qt::Key_Home);
         QCOMPARE(w->backend->fileName(), QString("1-harbour.png"));
         QVERIFY(!view->property("paused").toBool());
+
+        // Ctrl+M: every file in the folder, the one shown picked; the arrows
+        // move, Ctrl++ makes the tiles bigger, and Enter opens one.
+        QTest::keyClick(w->window, Qt::Key_M, Qt::ControlModifier);
+        QTRY_VERIFY(find<QQuickItem>(w.get(), "gridView"));
+        auto *grid = find<QQuickItem>(w.get(), "gridView");
+        QTRY_COMPARE(grid->property("count").toInt(), 4);
+        QCOMPARE(grid->property("currentIndex").toInt(), 0);
+        const double tiles = w->window->property("gridTileSize").toDouble();
+        QTest::keyClick(w->window, Qt::Key_Equal, Qt::ControlModifier);
+        QVERIFY(w->window->property("gridTileSize").toDouble() > tiles);
+        QTest::keyClick(w->window, Qt::Key_Right);
+        QCOMPARE(grid->property("currentIndex").toInt(), 1);
+        // Its keys are the grid's: N doesn't step the file behind it.
+        QTest::keyClick(w->window, Qt::Key_N);
+        QCOMPARE(w->backend->fileName(), QString("1-harbour.png"));
+        shot(w.get(), "13-grid");
+        QTest::keyClick(w->window, Qt::Key_Return);
+        QTRY_VERIFY(!w->window->property("gridShown").toBool());
+        QTRY_COMPARE(w->backend->fileName(), QString("2-shell.jpg"));
+        QTest::keyClick(w->window, Qt::Key_M, Qt::ControlModifier);
+        QTRY_VERIFY(w->window->property("gridShown").toBool());
+        QTest::keyClick(w->window, Qt::Key_Escape);
+        QTRY_VERIFY(!w->window->property("gridShown").toBool());
+        QTest::keyClick(w->window, Qt::Key_Home);
 
         // The ? overlay lists a picture's keys first.
         QTest::keyClick(w->window, Qt::Key_F1);

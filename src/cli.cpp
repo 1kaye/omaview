@@ -209,7 +209,7 @@ int help(const QStringList &arguments) {
     const QString topic = arguments.value(2);
     if (isCliCommand(topic) && topic != "help")
         return runCli({arguments.value(0), topic, "--help"});
-    print(stdout, "Usage: omaview [open] [files or URLs...]\n       omaview <command> [options]\n\n" + cliSummary());
+    print(stdout, "Usage: omaview [open] [files...]\n       omaview <command> [options]\n\n" + cliSummary());
     return 0;
 }
 
@@ -232,7 +232,7 @@ double parseTime(const QString &text) {
 
 QString cliSummary() {
     return "Viewer:\n"
-           "  open [files or URLs...]        Show or play, in a window; several files are the playlist\n\n"
+           "  open [files...]               Show or play, in a window; several files are the playlist\n\n"
            "Commands that need no display (omaview help <command> for options):\n"
            "  info <file>                    A video's streams and chapters, or a picture's size and camera\n"
            "  frame <file> --at T -o F.png   The exact frame at a time, as a PNG\n"

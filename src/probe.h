@@ -19,6 +19,7 @@ struct Stream {
     QString title;
     int width = 0;
     int height = 0;
+    int rotation = 0;     // degrees, from the display matrix a phone writes
     double frameRate = 0;
     int channels = 0;
     QString channelLayout;

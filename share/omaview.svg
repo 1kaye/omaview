@@ -14,9 +14,6 @@
       <stop offset="0" stop-color="#FFE45C"/>
       <stop offset="1" stop-color="#FFD60A"/>
     </linearGradient>
-    <clipPath id="frame">
-      <rect x="60" y="100" width="392" height="294" rx="24"/>
-    </clipPath>
   </defs>
 
   <!-- App background, as Omacut's -->
@@ -24,11 +21,11 @@
 
   <!-- The photo: a sun over two hills -->
   <rect x="60" y="100" width="392" height="294" rx="24" fill="url(#picture)"/>
-  <g clip-path="url(#frame)">
-    <circle cx="164" cy="188" r="34" fill="url(#accent)"/>
-    <path d="M40 394 L178 262 L246 322 L330 228 L472 380 L472 420 L40 420 Z" fill="#45454b"/>
-    <path d="M40 394 L150 318 L232 394 Z" fill="#5a5a61"/>
-  </g>
+  <!-- Drawn inside the frame's rounded corners rather than clipped to
+       them, since not every SVG renderer (Qt's among them) clips. -->
+  <circle cx="164" cy="188" r="34" fill="url(#accent)"/>
+  <path d="M60.5 375 L178 262 L246 322 L330 228 L452 358.6 L452 370 A24 24 0 0 1 428 394 L84 394 A24 24 0 0 1 60.5 375 Z" fill="#45454b"/>
+  <path d="M61.7 379 L150 318 L232 394 L84 394 A24 24 0 0 1 61.7 379 Z" fill="#5a5a61"/>
   <rect x="60" y="100" width="392" height="294" rx="24" fill="none" stroke="#3a3a3e" stroke-width="4"/>
 
   <!-- Play, on its corner, cut out of the tile so it reads at small sizes -->

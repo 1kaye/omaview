@@ -1,6 +1,6 @@
 # Omaview
 
-Omarchy's picture viewer and media player, listed in the launcher as Media Viewer. Open a photo, a video or a song and look at it, with nothing on screen but the picture. Step through a folder of photos with the arrows, zoom with the wheel, and watch the clip between them in the same window. Every key answers with a short on-screen display, and Tab brings in the controls when you want them.
+Omarchy's picture viewer and media player, listed in the launcher as Media Viewer. Open a photo, a video or a song and look at it, with its controls along the bottom and its title across the top; Tab puts them away for nothing on screen but the picture. Step through a folder of photos with the arrows, zoom with the wheel, and watch the clip between them in the same window. A corner shows the file, where it is in the folder or the time, for a moment whenever something changes; volume and speed flash their level in the middle.
 
 ![Omaview showing a photo, with the controls brought in by Tab](screenshots/picture.jpg)
 
@@ -16,7 +16,7 @@ Videos play through ffmpeg: Qt Multimedia's FFmpeg backend decodes, on the GPU w
 
 ## Command line
 
-`omaview photo.jpg` (or `omaview open photo.jpg`) opens a file with the others in its folder to step through. A photo's folder brings its pictures and videos, a song's its songs and videos, and a video's everything, but songs and pictures never mix: an album doesn't show its cover as a track. Several files given at once are the playlist, in that order. A URL plays what ffmpeg can open, or shows a picture.
+`omaview photo.jpg` (or `omaview open photo.jpg`) opens a file with the others in its folder to step through. A photo's folder brings its pictures and videos, a song's its songs and videos, and a video's everything, but songs and pictures never mix: an album doesn't show its cover as a track. Several files given at once are the playlist, in that order. A folder (`omaview ~/Pictures`) opens as the grid of its pictures and videos, or of its songs and videos when it has no pictures.
 
 These need no display, take `--json`, and exit 0 or 1 with the reason on stderr:
 
@@ -46,13 +46,14 @@ The keys mean what fits what's shown: the arrows step through pictures and seek 
 
 | Key | Action |
 |---|---|
-| `Space` `K` | Play or pause |
-| `←` `→` / `Shift+←` `→` / `J` `L` | Back or forward 5 seconds / 1 second / 10 seconds |
+| `Space` | Play or pause |
+| `←` `→` / `Shift+←` `→` | Back or forward 5 seconds / 1 second |
 | `0`–`9` / `Home` | Jump to that tenth of the way / back to the start |
 | `,` `.` | Step one frame back or forward |
 | `PgUp` `PgDn` | Previous or next chapter |
 | `[` `]` / `Backspace` | Slower or faster / normal speed |
-| `↑` `↓` / `M` | Louder or quieter / mute |
+| `↑` `↓` / `M` | Louder or quieter, up to 150% / mute |
+| `R` | Loop, or stop looping |
 | `C` / `A` | Next subtitles, or off / next audio track |
 | `Enter` | At the end of a file, play the next one |
 | `Ctrl+S` | Save the frame as a PNG |
@@ -65,6 +66,8 @@ Click the picture to play or pause, double-click it for fullscreen, and scroll f
 | Key | Action |
 |---|---|
 | `N` `P` | Next or previous file |
+| `Ctrl+M` | Every file in the folder as a grid; the video under the pointer flips through frames from across it |
+| `Ctrl++` `Ctrl+−` | Bigger or smaller tiles in the grid |
 | `Tab` | Show or hide the controls |
 | `F` / `Esc` | Fullscreen / leave fullscreen or hide the controls |
 | `I` | What's in the file: streams and chapters, or the camera's details |

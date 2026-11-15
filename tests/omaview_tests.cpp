@@ -431,7 +431,19 @@ private slots:
         QCOMPARE(names("IMG_2.jpg"), photos);
         QCOMPARE(names("memo.m4a"), (QStringList{"IMG_3.mov", "memo.m4a"}));
         QVERIFY(!playlist::playable("scan.pdf"));
-        QVERIFY(playlist::picture("https://example.com/photo.webp?w=800"));
+        // A folder opened as itself is its pictures and videos; one of songs,
+        // its songs and videos.
+        QStringList folder;
+        for (const QString &path : playlist::folder(dir.path()))
+            folder << QFileInfo(path).fileName();
+        QCOMPARE(folder, photos);
+        QTemporaryDir album;
+        for (const char *name : {"2 b.flac", "1 a.flac", "live.mkv"})
+            QVERIFY(write(album.filePath(name), "x"));
+        folder.clear();
+        for (const QString &path : playlist::folder(album.path()))
+            folder << QFileInfo(path).fileName();
+        QCOMPARE(folder, (QStringList{"1 a.flac", "2 b.flac", "live.mkv"}));
     }
 
     // Pictures
@@ -653,6 +665,19 @@ private slots:
         const QString out = m_home.filePath("frame.png");
         QVERIFY(frames::savePng(frame, out, &error));
         QCOMPARE(QImage(out).size(), QSize(320, 180));
+    }
+
+    void theGridHasAPosterAndAFilmstrip() {
+        const QImage poster = frames::poster(m_clip);
+        QCOMPARE(poster.width(), 640);
+        // Ten frames from across the video, each its own, made once.
+        const QImage first = frames::filmstripFrame(m_clip, 0);
+        const QImage last = frames::filmstripFrame(m_clip, frames::filmstripFrames - 1);
+        QCOMPARE(first.width(), 320);
+        QCOMPARE(last.size(), first.size());
+        QVERIFY(first != last);
+        QVERIFY(frames::filmstripFrame(m_clip, frames::filmstripFrames).isNull());
+        QVERIFY(QFileInfo::exists(frames::previewCacheDirectory() + "/" + Positions::key(m_clip) + ".strip.jpg"));
     }
 
     // Previews

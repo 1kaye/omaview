@@ -12,7 +12,16 @@ ApplicationWindow {
     height: 540
     minimumWidth: 320
     minimumHeight: 200
-    visible: true
+    // Started with a picture, the window stays hidden until the picture is
+    // ready, then opens once at its size, rather than drawing empty, then
+    // the picture, then resizing.
+    property bool holding: false
+    // Started with files: the empty screen's play button never flashes
+    // before the first one arrives.
+    property bool opening: false
+    visible: !holding
+    // A picture slow to decode doesn't keep the window away for long.
+    Timer { running: win.holding; interval: 1500; onTriggered: win.holding = false }
     title: backend.hasMedia ? backend.title : qsTr("Media Viewer")
     // The picture's surround is black whatever the theme, as every player's
     // is; ApplicationWindow would otherwise paint Material's background.
@@ -26,15 +35,14 @@ ApplicationWindow {
 
     readonly property bool rightToLeft: Qt.application.layoutDirection === Qt.RightToLeft
     readonly property bool fullscreen: visibility === Window.FullScreen
-    property bool overlayShown: false
+    // The controls show from the start; Tab hides them and brings them back,
+    // and they stay as they were from one file to the next.
+    property bool overlayShown: true
+    property bool gridShown: false
+    // The grid's tiles keep their size from one showing to the next.
+    property real gridTileSize: 240
     property bool sized: false
 
-    // The one table of keys: the shortcuts, the overlay's labels and the ?
-    // overlay all read it, so they can't drift apart.
-    readonly property var keys: ({
-        play: "Space", seek: "← →", copy: "Ctrl+C", edit: "E", speed: "[ ]",
-        subtitles: "C", audio: "A", zoom: "+ −", fit: "0", turn: "R", trash: "Delete"
-    })
     // The keys mean what fits what's shown: ← → step through pictures and
     // seek in a video. The ? overlay lists what's shown first.
     readonly property var pictureShortcuts: [
@@ -50,10 +58,9 @@ ApplicationWindow {
         { keys: "E", action: qsTr("Edit in Omasnap") }
     ]
     readonly property var videoShortcuts: [
-        { keys: "Space  K", action: qsTr("Play or pause") },
+        { keys: "Space", action: qsTr("Play or pause") },
         { keys: "← →", action: qsTr("Back or forward 5 seconds") },
         { keys: "Shift+← →", action: qsTr("Back or forward 1 second") },
-        { keys: "J  L", action: qsTr("Back or forward 10 seconds") },
         { keys: "0 – 9", action: qsTr("Jump to that tenth of the way") },
         { keys: "Home", action: qsTr("Back to the start") },
         { keys: ",  .", action: qsTr("Step one frame back or forward") },
@@ -62,6 +69,7 @@ ApplicationWindow {
         { keys: "Backspace", action: qsTr("Normal speed") },
         { keys: "↑ ↓", action: qsTr("Louder or quieter") },
         { keys: "M", action: qsTr("Mute") },
+        { keys: "R", action: qsTr("Loop, or stop looping") },
         { keys: "C", action: qsTr("Next subtitles, or off") },
         { keys: "A", action: qsTr("Next audio track") },
         { keys: "Ctrl+S", action: qsTr("Save the frame") },
@@ -69,6 +77,8 @@ ApplicationWindow {
     ]
     readonly property var commonShortcuts: [
         { keys: "N  P", action: qsTr("Next or previous file") },
+        { keys: "Ctrl+M", action: qsTr("Every file in the folder") },
+        { keys: "Ctrl++  Ctrl+−", action: qsTr("Bigger or smaller tiles") },
         { keys: "Tab", action: qsTr("Show or hide the controls") },
         { keys: "F", action: qsTr("Fullscreen") },
         { keys: "I", action: qsTr("What's in the file") },
@@ -94,22 +104,10 @@ ApplicationWindow {
             showFullScreen()
     }
 
-    // The display that answers a key: the state and time in the corner, and
-    // what changed in the middle.
+    // The corner shows for a moment whenever something changes.
     function poke() {
         cornerTimer.restart()
         cornerOsd.shown = true
-    }
-    function say(value, hint) {
-        centerOsd.value = value
-        centerOsd.hint = hint || ""
-        centerOsd.shown = true
-        centerTimer.restart()
-        poke()
-    }
-    function showSeek() {
-        seekTimer.restart()
-        poke()
     }
     // Where a picture is in its folder, and how far it is zoomed.
     function pictureStatus() {
@@ -118,22 +116,26 @@ ApplicationWindow {
             parts.push(qsTr("%1 of %2").arg((backend.playlistIndex + 1).toLocaleString(Qt.locale(), 'f', 0))
                                        .arg(backend.playlistCount.toLocaleString(Qt.locale(), 'f', 0)))
         if (!pictureView.fitted)
-            parts.push(percent(pictureView.ratio))
+            parts.push(Math.round(pictureView.ratio * 100).toLocaleString(Qt.locale(), 'f', 0) + "%")
         return parts.join("  ·  ")
     }
-    function percent(value) {
-        return Math.round(value * 100).toLocaleString(Qt.locale(), 'f', 0) + "%"
-    }
-    function speedText() {
-        return backend.rate.toLocaleString(Qt.locale(), 'f', backend.rate * 4 % 4 === 0 ? 0 : 2) + "×"
+    function showLevel(speed) {
+        levelOsd.speed = speed
+        levelOsd.shown = true
+        levelTimer.restart()
     }
 
     // The window opens at the picture's or the video's shape, as large as
     // fits in 80% of the screen, and never larger than the picture itself; a
     // song gets a small square for its cover. It keeps that size as the next
-    // file comes, rather than jumping about.
+    // file comes, rather than jumping about. A window the compositor has
+    // already given a size of its own, as a tiling one does, keeps it: asked
+    // to change, it would shrink and then snap back.
+    readonly property bool managed: visible && (width !== 960 || height !== 540)
     function sizeTo(naturalWidth, naturalHeight) {
         sized = true
+        if (managed)
+            return
         const maxWidth = Screen.desktopAvailableWidth * 0.8, maxHeight = Screen.desktopAvailableHeight * 0.8
         const scale = Math.min(1, maxWidth / naturalWidth, maxHeight / naturalHeight)
         width = Math.max(minimumWidth, Math.round(naturalWidth * scale))
@@ -148,9 +150,21 @@ ApplicationWindow {
         } else if (backend.hasVideo && backend.videoSize.width > 0) {
             sizeTo(backend.videoSize.width, backend.videoSize.height)
         } else if (!backend.hasVideo && !backend.loading && backend.duration > 0) {
-            sized = true
-            width = height = Math.max(minimumHeight, Math.min(520, Screen.desktopAvailableHeight * 0.6))
+            sizeSquare()
         }
+    }
+    function sizeSquare() {
+        sized = true
+        if (!managed)
+            width = height = Math.max(minimumHeight, Math.min(520, Screen.desktopAvailableHeight * 0.6))
+    }
+    // Started with a video or a song, measured before the window shows.
+    function openAt(naturalWidth, naturalHeight, song) {
+        if (naturalWidth > 0 && naturalHeight > 0)
+            sizeTo(naturalWidth, naturalHeight)
+        else if (song)
+            sizeSquare()
+        holding = false
     }
 
     // The screen stays on while a video plays, and only then.
@@ -164,35 +178,28 @@ ApplicationWindow {
         target: backend
         function onVideoSizeChanged() { win.sizeToMedia() }
         function onDurationChanged() { win.sizeToMedia() }
-        // Loading and a stalled stream keep the corner up, saying so, rather
-        // than leaving a frozen picture without a word.
-        function onStatusChanged() {
-            win.sizeToMedia()
-            if (backend.loading || backend.buffering) {
-                cornerOsd.shown = true
-                cornerTimer.stop()
-            } else if (cornerOsd.shown) {
-                cornerTimer.restart()
-            }
-        }
+        function onStatusChanged() { win.sizeToMedia() }
         function onPictureCleared() {
             if (videoLoader.item)
                 videoLoader.item.clearOutput()
         }
-        function onNotice(text) { win.say(text, "") }
-        function onResumedAtChanged() {
-            if (backend.resumedAt >= 0)
-                win.say(qsTr("Resumed at %1").arg(Format.clock(backend.resumedAt)), qsTr("Home starts over"))
+        function onFolderOpened() { win.gridShown = true }
+        function onErrorChanged() {
+            if (backend.error !== "")
+                win.holding = false
         }
         function onMediaChanged() {
-            // Every file opens bare, and every picture fitted and moving.
-            win.overlayShown = false
+            win.opening = false
+            // Every picture opens fitted and moving.
             pictureView.reset()
             pictureView.paused = false
             win.poke()
-            if (backend.takeFirstRunHint())
-                win.say(qsTr("Press Tab for controls"), qsTr("? shows every key"))
         }
+        function onSeeked() { win.poke() }
+        function onPlayingChanged() { win.poke() }
+        function onVolumeChanged() { win.poke() }
+        function onRateChanged() { win.poke() }
+        function onRotationChanged() { win.poke() }
     }
 
     onClosing: backend.close()
@@ -201,11 +208,10 @@ ApplicationWindow {
     readonly property bool playable: backend.hasMedia && !backend.isPicture
 
     function step(forward) {
-        if (forward ? !backend.next() : !backend.previous())
-            say(forward ? qsTr("This is the last file") : qsTr("This is the first file"), "")
-    }
-    function sayZoom() {
-        say(pictureView.fitted ? qsTr("Fit") : percent(pictureView.ratio), qsTr("Zoom"))
+        if (forward)
+            backend.next()
+        else
+            backend.previous()
     }
     // A picture larger than the window moves under the arrows; one that fits
     // steps to the next file.
@@ -218,45 +224,33 @@ ApplicationWindow {
     }
 
     Shortcut {
-        sequences: ["Space", "K"]
+        sequence: "Space"
         enabled: backend.hasMedia
         onActivated: {
-            if (win.picture) {
-                if (backend.animated) {
-                    pictureView.paused = !pictureView.paused
-                    win.say(pictureView.paused ? qsTr("Paused") : qsTr("Playing"), "")
-                }
-                return
-            }
-            const wasPlaying = backend.playing
-            backend.togglePlay()
-            win.say(wasPlaying ? qsTr("Paused") : qsTr("Playing"), "")
+            if (!win.picture)
+                backend.togglePlay()
+            else if (backend.animated)
+                pictureView.paused = !pictureView.paused
         }
     }
-    Shortcut { sequence: "Left"; onActivated: win.picture ? win.arrow(-1, 0) : (backend.seekBy(-5000), win.showSeek()) }
-    Shortcut { sequence: "Right"; onActivated: win.picture ? win.arrow(1, 0) : (backend.seekBy(5000), win.showSeek()) }
-    Shortcut { sequence: "Shift+Left"; enabled: win.playable; onActivated: { backend.seekBy(-1000); win.showSeek() } }
-    Shortcut { sequence: "Shift+Right"; enabled: win.playable; onActivated: { backend.seekBy(1000); win.showSeek() } }
-    Shortcut { sequence: "J"; enabled: win.playable; onActivated: { backend.seekBy(-10000); win.showSeek() } }
-    Shortcut { sequence: "L"; enabled: win.playable; onActivated: { backend.seekBy(10000); win.showSeek() } }
+    Shortcut { sequence: "Left"; onActivated: win.picture ? win.arrow(-1, 0) : (backend.seekBy(-5000)) }
+    Shortcut { sequence: "Right"; onActivated: win.picture ? win.arrow(1, 0) : (backend.seekBy(5000)) }
+    Shortcut { sequence: "Shift+Left"; enabled: win.playable; onActivated: { backend.seekBy(-1000) } }
+    Shortcut { sequence: "Shift+Right"; enabled: win.playable; onActivated: { backend.seekBy(1000) } }
     Shortcut {
         sequence: "Home"
-        onActivated: win.picture ? backend.go(0) : (backend.startOver(), win.showSeek())
+        onActivated: win.picture ? backend.go(0) : backend.startOver()
     }
     Shortcut { sequence: "End"; enabled: win.picture; onActivated: backend.go(backend.playlistCount - 1) }
     function jumpTenth(n) {
         if (picture) {
-            if (n === 0) {
+            if (n === 0)
                 pictureView.reset()
-                sayZoom()
-            } else if (n === 1) {
+            else if (n === 1)
                 pictureView.actualSize()
-                sayZoom()
-            }
             return
         }
         backend.seekFraction(n / 10)
-        showSeek()
     }
     Shortcut { sequence: "0"; onActivated: win.jumpTenth(0) }
     Shortcut { sequence: "1"; onActivated: win.jumpTenth(1) }
@@ -268,18 +262,19 @@ ApplicationWindow {
     Shortcut { sequence: "7"; onActivated: win.jumpTenth(7) }
     Shortcut { sequence: "8"; onActivated: win.jumpTenth(8) }
     Shortcut { sequence: "9"; onActivated: win.jumpTenth(9) }
-    Shortcut { sequences: ["+", "="]; enabled: win.picture; onActivated: { pictureView.zoomBy(1.25); win.sayZoom() } }
-    Shortcut { sequences: ["-", "_"]; enabled: win.picture; onActivated: { pictureView.zoomBy(0.8); win.sayZoom() } }
-    Shortcut { sequence: "R"; enabled: win.picture; onActivated: backend.rotate(90) }
+    Shortcut { sequences: ["+", "="]; enabled: win.picture; onActivated: pictureView.zoomBy(1.25) }
+    Shortcut { sequences: ["-", "_"]; enabled: win.picture; onActivated: pictureView.zoomBy(0.8) }
+    // R turns a picture, and loops a video or a song.
+    Shortcut { sequence: "R"; enabled: backend.hasMedia; onActivated: win.picture ? backend.rotate(90) : backend.toggleLoop() }
     Shortcut { sequence: "Shift+R"; enabled: win.picture; onActivated: backend.rotate(-90) }
-    Shortcut { sequence: ","; enabled: win.playable; onActivated: { backend.stepFrame(-1); win.showSeek() } }
-    Shortcut { sequence: "."; enabled: win.playable; onActivated: { backend.stepFrame(1); win.showSeek() } }
+    Shortcut { sequence: ","; enabled: win.playable; onActivated: { backend.stepFrame(-1) } }
+    Shortcut { sequence: "."; enabled: win.playable; onActivated: { backend.stepFrame(1) } }
     Shortcut {
         sequence: "PgUp"
         onActivated: {
             if (win.picture)
                 return win.step(false)
-            backend.jumpChapter(-1); win.showSeek(); if (backend.chapterTitle !== "") win.say(backend.chapterTitle, qsTr("Chapter"))
+            backend.jumpChapter(-1)
         }
     }
     Shortcut {
@@ -287,30 +282,24 @@ ApplicationWindow {
         onActivated: {
             if (win.picture)
                 return win.step(true)
-            backend.jumpChapter(1); win.showSeek(); if (backend.chapterTitle !== "") win.say(backend.chapterTitle, qsTr("Chapter"))
+            backend.jumpChapter(1)
         }
     }
-    Shortcut { sequence: "["; enabled: win.playable; onActivated: { backend.changeRate(-0.25); win.say(win.speedText(), qsTr("Speed · [ slower · ] faster · Backspace resets")) } }
-    Shortcut { sequence: "]"; enabled: win.playable; onActivated: { backend.changeRate(0.25); win.say(win.speedText(), qsTr("Speed · [ slower · ] faster · Backspace resets")) } }
-    Shortcut { sequence: "Backspace"; enabled: win.playable; onActivated: { backend.resetRate(); win.say(win.speedText(), qsTr("Speed")) } }
-    Shortcut { sequence: "Up"; onActivated: win.picture ? win.arrow(0, -1) : (backend.changeVolume(0.05), win.say(win.percent(backend.volume), qsTr("Volume"))) }
-    Shortcut { sequence: "Down"; onActivated: win.picture ? win.arrow(0, 1) : (backend.changeVolume(-0.05), win.say(win.percent(backend.volume), qsTr("Volume"))) }
-    Shortcut { sequence: "M"; enabled: win.playable; onActivated: { backend.toggleMute(); win.say(backend.muted ? qsTr("Muted") : win.percent(backend.volume), qsTr("Volume")) } }
+    Shortcut { sequence: "["; enabled: win.playable; onActivated: { backend.changeRate(-0.25); win.showLevel(true) } }
+    Shortcut { sequence: "]"; enabled: win.playable; onActivated: { backend.changeRate(0.25); win.showLevel(true) } }
+    Shortcut { sequence: "Backspace"; enabled: win.playable; onActivated: { backend.resetRate(); win.showLevel(true) } }
+    Shortcut { sequence: "Up"; onActivated: win.picture ? win.arrow(0, -1) : (backend.changeVolume(0.05), win.showLevel(false)) }
+    Shortcut { sequence: "Down"; onActivated: win.picture ? win.arrow(0, 1) : (backend.changeVolume(-0.05), win.showLevel(false)) }
+    Shortcut { sequence: "M"; enabled: win.playable; onActivated: { backend.toggleMute(); win.showLevel(false) } }
     Shortcut {
         sequence: "C"
         enabled: win.playable
-        onActivated: {
-            backend.cycleSubtitles()
-            win.say(backend.subtitleChoices === 0 ? qsTr("No subtitles") : backend.subtitleLabel !== "" ? backend.subtitleLabel : qsTr("Off"), qsTr("Subtitles"))
-        }
+        onActivated: backend.cycleSubtitles()
     }
     Shortcut {
         sequence: "A"
         enabled: win.playable
-        onActivated: {
-            backend.cycleAudio()
-            win.say(backend.audioTracks < 2 ? qsTr("Only one audio track") : backend.audioLabel, qsTr("Audio"))
-        }
+        onActivated: backend.cycleAudio()
     }
     Shortcut { sequence: "Tab"; onActivated: win.overlayShown = !win.overlayShown }
     Shortcut { sequence: "F"; onActivated: win.toggleFullscreen() }
@@ -336,14 +325,26 @@ ApplicationWindow {
     Shortcut {
         sequence: "Del"
         enabled: backend.hasMedia
-        onActivated: {
-            const name = backend.fileName
-            if (backend.trash())
-                win.say(qsTr("Moved %1 to the Trash").arg(name), qsTr("Ctrl+Z brings it back"))
-        }
+        onActivated: backend.trash()
     }
     Shortcut { sequence: "Ctrl+Z"; onActivated: backend.undoTrash() }
     Shortcut { sequence: "Ctrl+O"; onActivated: backend.openDialog() }
+    Shortcut {
+        sequence: "Ctrl+M"
+        enabled: backend.playlistCount > 0
+        onActivated: win.toggleGrid()
+    }
+    function toggleGrid() {
+        // What was playing waits behind the grid.
+        if (!gridShown && backend.playing)
+            backend.togglePlay()
+        gridShown = !gridShown
+    }
+    function zoomGrid(factor) {
+        gridTileSize = Math.max(120, Math.min(720, Math.round(gridTileSize * factor)))
+    }
+    Shortcut { sequences: ["Ctrl++", "Ctrl+="]; enabled: win.gridShown; onActivated: win.zoomGrid(1.25) }
+    Shortcut { sequences: ["Ctrl+-", "Ctrl+_"]; enabled: win.gridShown; onActivated: win.zoomGrid(0.8) }
     Shortcut { sequences: ["?", "F1"]; onActivated: help.opened ? help.close() : help.open() }
     Shortcut { sequences: ["Q", "Ctrl+Q"]; onActivated: win.close() }
 
@@ -385,7 +386,12 @@ ApplicationWindow {
             transparent: backend.transparent
             vectorSize: backend.pictureSize
             turn: backend.rotation
-            onReadyChanged: win.sizeToMedia()
+            onZoomChanged: win.poke()
+            onReadyChanged: {
+                win.sizeToMedia()
+                if (ready)
+                    win.holding = false
+            }
             onFailed: backend.pictureFailed()
         }
         // The last picture stays until the next one's header has been read,
@@ -468,29 +474,13 @@ ApplicationWindow {
             }
         }
 
-        // Nothing open yet: say how to start.
-        ColumnLayout {
+        // Nothing open yet: a play button, and a click anywhere opens files.
+        Icon {
             anchors.centerIn: parent
-            visible: !backend.hasMedia
-            spacing: 10
-            Icon {
-                Layout.alignment: Qt.AlignHCenter
-                name: "play"
-                size: 40
-                color: theme.accent
-            }
-            Text {
-                Layout.alignment: Qt.AlignHCenter
-                text: qsTr("Drop a picture, a video or a song here")
-                color: "white"
-                font.pixelSize: 18
-            }
-            Text {
-                Layout.alignment: Qt.AlignHCenter
-                text: qsTr("or press Ctrl+O to open one")
-                color: "#9a9aa0"
-                font.pixelSize: 14
-            }
+            visible: !backend.hasMedia && !win.opening
+            name: "play"
+            size: 120
+            color: theme.accent
         }
 
         // What went wrong, in plain words, rather than a black picture.
@@ -518,33 +508,6 @@ ApplicationWindow {
             }
         }
 
-        // The end of a file, with the next one offered, never started.
-        Rectangle {
-            visible: backend.ended && backend.nextName !== "" && !win.overlayShown
-            anchors.centerIn: parent
-            width: endColumn.implicitWidth + 40
-            height: endColumn.implicitHeight + 28
-            color: Qt.rgba(theme.background.r, theme.background.g, theme.background.b, 0.88)
-            radius: theme.radius
-            Column {
-                id: endColumn
-                anchors.centerIn: parent
-                spacing: 6
-                Text {
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    text: qsTr("Next: %1").arg(backend.nextName)
-                    color: theme.foreground
-                    font.pixelSize: 17
-                }
-                Text {
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    text: qsTr("Enter plays it · N skips to it")
-                    color: theme.colors.muted
-                    font.pixelSize: 13
-                }
-            }
-        }
-
         // Clicking plays and pauses; a double click is fullscreen, and its
         // second click undoes the first one's pause.
         // A picture only goes fullscreen.
@@ -558,6 +521,10 @@ ApplicationWindow {
                     win.toggleFullscreen()
             }
         }
+        TapHandler {
+            enabled: !backend.hasMedia
+            onTapped: backend.openDialog()
+        }
         // The wheel is the volume; over a picture it zooms instead.
         WheelHandler {
             enabled: win.playable
@@ -567,14 +534,15 @@ ApplicationWindow {
                 if (steps === 0)
                     return
                 backend.changeVolume(0.05 * steps)
-                win.say(win.percent(backend.volume), qsTr("Volume"))
+                win.showLevel(false)
             }
         }
         // The pointer hides after a second of stillness.
         HoverHandler {
             id: pointer
             property bool still: false
-            cursorShape: still && !win.overlayShown ? Qt.BlankCursor : Qt.ArrowCursor
+            cursorShape: !backend.hasMedia ? Qt.PointingHandCursor
+                         : still && !win.overlayShown ? Qt.BlankCursor : Qt.ArrowCursor
             onPointChanged: { still = false; stillTimer.restart() }
         }
         Timer { id: stillTimer; interval: 1000; onTriggered: pointer.still = true }
@@ -616,14 +584,12 @@ ApplicationWindow {
                 anchors.leftMargin: expanded ? 16 : 0
                 anchors.rightMargin: expanded ? 16 : 0
                 anchors.bottomMargin: expanded ? 6 : 0
-                expanded: edgeHover.hovered || seekTimer.running
-                // A key seek shows where it landed, without the pointer.
-                labelAtPlayhead: seekTimer.running && !edgeHover.hovered
+                expanded: edgeHover.hovered
             }
         }
-        Timer { id: seekTimer; interval: 2000 }
 
-        // The corner: playing or paused, the time, the file.
+        // The corner: playing or paused, the time, the file; for a picture,
+        // where it is in the folder and how far it is zoomed.
         Rectangle {
             id: cornerOsd
             objectName: "cornerOsd"
@@ -648,20 +614,21 @@ ApplicationWindow {
                     color: theme.accent
                 }
                 Text {
+                    objectName: "cornerStatus"
                     anchors.verticalCenter: parent.verticalCenter
                     visible: text !== ""
                     // Formatted only while it shows, not on every position update.
                     text: !cornerOsd.visible ? ""
                           : backend.isPicture ? win.pictureStatus()
                           : backend.duration > 0 ? Format.clock(backend.position) + " / " + Format.clock(backend.duration)
-                          : (backend.seekable ? Format.clock(backend.position) : qsTr("Live"))
+                          : Format.clock(backend.position)
                     color: theme.foreground
                     font.family: "monospace"
                     font.pixelSize: 13
                 }
                 Text {
                     anchors.verticalCenter: parent.verticalCenter
-                    text: backend.buffering ? qsTr("Buffering…") : backend.fileName
+                    text: backend.fileName
                     color: theme.colors.muted
                     font.pixelSize: 13
                     elide: Text.ElideMiddle
@@ -673,53 +640,48 @@ ApplicationWindow {
             id: cornerTimer
             interval: 2000
             // A paused video keeps it; a picture, which never plays, doesn't.
-            onTriggered: cornerOsd.shown = win.playable && (!backend.playing || backend.buffering || backend.loading)
+            onTriggered: cornerOsd.shown = win.playable && (!backend.playing || backend.loading)
         }
 
-        // The middle: what just changed.
+        // The volume and the speed, the changes a key makes that show:
+        // briefly, in the middle.
         Rectangle {
-            id: centerOsd
-            objectName: "centerOsd"
+            id: levelOsd
+            objectName: "levelOsd"
             property bool shown: false
-            property string value
-            property string hint
+            property bool speed: false
             visible: opacity > 0
             opacity: shown ? 1 : 0
             Behavior on opacity { NumberAnimation { duration: 180 } }
             anchors.centerIn: parent
-            width: Math.min(parent.width - 40, centerColumn.implicitWidth + 52)
-            height: centerColumn.implicitHeight + 32
+            width: levelColumn.implicitWidth + 52
+            height: levelColumn.implicitHeight + 32
             radius: theme.radius
             color: Qt.rgba(theme.background.r, theme.background.g, theme.background.b, 0.85)
             Column {
-                id: centerColumn
+                id: levelColumn
                 anchors.centerIn: parent
-                width: Math.min(implicitWidth, centerOsd.width - 52)
                 spacing: 8
                 Text {
-                    objectName: "centerValue"
+                    objectName: "levelValue"
                     anchors.horizontalCenter: parent.horizontalCenter
-                    width: Math.min(implicitWidth, win.width - 92)
-                    text: centerOsd.value
+                    text: levelOsd.speed
+                          ? backend.rate.toLocaleString(Qt.locale(), 'f', backend.rate * 4 % 4 === 0 ? 0 : 2) + "×"
+                          : backend.muted ? qsTr("Muted")
+                          : Math.round(backend.volume * 100).toLocaleString(Qt.locale(), 'f', 0) + "%"
                     color: theme.accent
                     font.pixelSize: 28
                     font.weight: Font.DemiBold
-                    elide: Text.ElideRight
-                    horizontalAlignment: Text.AlignHCenter
                 }
                 Text {
                     anchors.horizontalCenter: parent.horizontalCenter
-                    visible: text !== ""
-                    width: Math.min(implicitWidth, win.width - 92)
-                    text: centerOsd.hint
+                    text: levelOsd.speed ? qsTr("Speed") : qsTr("Volume")
                     color: theme.colors.muted
                     font.pixelSize: 13
-                    elide: Text.ElideRight
-                    horizontalAlignment: Text.AlignHCenter
                 }
             }
         }
-        Timer { id: centerTimer; interval: 2000; onTriggered: centerOsd.shown = false }
+        Timer { id: levelTimer; interval: 2000; onTriggered: levelOsd.shown = false }
 
         // Made only while it shows, so its clock and timeline cost nothing
         // during bare playback.
@@ -730,14 +692,32 @@ ApplicationWindow {
             active: win.overlayShown && backend.hasMedia
             sourceComponent: ControlsOverlay {
                 fullscreen: win.fullscreen
-                keys: win.keys
                 picture: pictureView
                 onToggleFullscreen: win.toggleFullscreen()
+                onShowKeys: help.open()
+                onShowGrid: win.toggleGrid()
                 opacity: 0
                 Component.onCompleted: opacity = 1
                 Behavior on opacity { NumberAnimation { duration: 150 } }
             }
         }
+    }
+
+    Loader {
+        id: gridLoader
+        anchors.fill: parent
+        active: win.gridShown
+        sourceComponent: MediaGrid {
+            tileSize: win.gridTileSize
+            onPicked: index => {
+                win.gridShown = false
+                // The file already open plays when picked, as any other would.
+                if (!backend.go(index) && win.playable && !backend.playing)
+                    backend.togglePlay()
+            }
+            onClosed: win.gridShown = false
+        }
+        onLoaded: item.forceActiveFocus()
     }
 
     // I: what's in the file.
