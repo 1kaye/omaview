@@ -89,7 +89,7 @@ PortalFileFilter pngFilter() {
 }
 
 QString portalToken() {
-    return QStringLiteral("omaplay_%1").arg(QRandomGenerator::global()->generate());
+    return QStringLiteral("omaview_%1").arg(QRandomGenerator::global()->generate());
 }
 
 QByteArray portalPathBytes(const QString &path) {

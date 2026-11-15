@@ -171,7 +171,7 @@ PreviewLayout PreviewLayout::forVideo(double duration, QSize videoSize) {
 }
 
 QString previewCacheDirectory() {
-    return QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation) + "/omaplay/previews";
+    return QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation) + "/omaview/previews";
 }
 
 QString previewCachePath(const QString &videoPath) {

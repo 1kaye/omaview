@@ -8,7 +8,7 @@
 
 class Backend;
 
-// Makes an Omaplay window an MPRIS player, so media keys, playerctl and the
+// Makes an Omaview window an MPRIS player, so media keys, playerctl and the
 // bar's now-playing reach it. Each window registers its own instance name, as
 // the specification asks of apps that run several at once.
 class Mpris : public QObject {
@@ -55,7 +55,7 @@ public:
     bool canSetFullscreen() const { return false; }
     bool hasTrackList() const { return false; }
     QString identity() const { return QStringLiteral("Video Player"); }
-    QString desktopEntry() const { return QStringLiteral("omaplay"); }
+    QString desktopEntry() const { return QStringLiteral("omaview"); }
     QStringList supportedUriSchemes() const { return {"file", "http", "https"}; }
     QStringList supportedMimeTypes() const { return {"video/mp4", "video/x-matroska", "video/webm", "audio/mpeg"}; }
 

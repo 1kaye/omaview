@@ -1,5 +1,5 @@
 // Drives the real Main.qml against the real backend and short clips made by
-// ffmpeg, offscreen, and fails on any QML warning. With OMAPLAY_SHOTS set to
+// ffmpeg, offscreen, and fails on any QML warning. With OMAVIEW_SHOTS set to
 // a directory, it also saves what the window looked like at each step.
 
 #include <QDir>
@@ -122,7 +122,7 @@ class UiTests : public QObject {
     // can't draw a VideoOutput, so the frame on screen is painted where the
     // picture is and the window, with a clear background, over it.
     void shot(Window *w, const QString &name) {
-        const QString directory = qEnvironmentVariable("OMAPLAY_SHOTS");
+        const QString directory = qEnvironmentVariable("OMAVIEW_SHOTS");
         if (directory.isEmpty())
             return;
         QDir().mkpath(directory);

@@ -310,7 +310,7 @@ void Backend::ensurePlayer() {
     connect(m_player, &QMediaPlayer::errorOccurred, this, [this](QMediaPlayer::Error error, const QString &message) {
         if (error == QMediaPlayer::NoError)
             return;
-        qWarning("omaplay: %s", qPrintable(message));
+        qWarning("omaview: %s", qPrintable(message));
         setError(error == QMediaPlayer::FormatError          ? Problem::Format
                  : error == QMediaPlayer::NetworkError       ? Problem::Network
                  : error == QMediaPlayer::AccessDeniedError  ? Problem::Access
@@ -1133,7 +1133,7 @@ void Backend::saveFrame() {
     QString folder = QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
     if (!QDir(folder).exists())
         folder = QDir::homePath();
-    const QString base = m_source.isLocalFile() ? QFileInfo(m_source.toLocalFile()).completeBaseName() : "omaplay";
+    const QString base = m_source.isLocalFile() ? QFileInfo(m_source.toLocalFile()).completeBaseName() : "omaview";
     const QString name = QString("%1-%2.png").arg(base, clock(m_position).replace(':', '-'));
     m_picker->saveImage(QUrl::fromLocalFile(folder + "/" + name));
 }

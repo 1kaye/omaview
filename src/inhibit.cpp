@@ -4,7 +4,7 @@
 #include <cstring>
 #include <wayland-client.h>
 
-// The one private header in Omaplay: Qt hands out a window's wl_surface only
+// The one private header in Omaview: Qt hands out a window's wl_surface only
 // through QPlatformNativeInterface. Calling it is a virtual call, not a link
 // against Qt's private symbols, so the package is not tied to one Qt version.
 #include <qpa/qplatformnativeinterface.h>
@@ -38,7 +38,7 @@ IdleInhibitor::IdleInhibitor(QObject *parent) : QObject(parent) {
     auto *wayland = qGuiApp ? qGuiApp->nativeInterface<QNativeInterface::QWaylandApplication>() : nullptr;
     if (!wayland || !wayland->display())
         return;
-    // A queue of Omaplay's own, so asking for the globals never dispatches
+    // A queue of Omaview's own, so asking for the globals never dispatches
     // events Qt's Wayland thread is waiting for.
     wl_display *display = wayland->display();
     m_queue = wl_display_create_queue(display);

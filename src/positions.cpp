@@ -15,7 +15,7 @@
 Positions::Positions(const QString &path)
     : m_path(!path.isEmpty() ? path
                              : QStandardPaths::writableLocation(QStandardPaths::GenericStateLocation)
-                                   + "/omaplay/positions.json") {}
+                                   + "/omaview/positions.json") {}
 
 QString Positions::key(const QString &file) {
     const QFileInfo info(file);

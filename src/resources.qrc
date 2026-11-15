@@ -7,7 +7,7 @@
         <file alias="Icon.qml">Icon.qml</file>
         <file alias="Format.js">Format.js</file>
         <file alias="skill.md">skill.md</file>
-        <file alias="omaplay.svg">../share/omaplay.svg</file>
+        <file alias="omaview.svg">../share/omaview.svg</file>
         <file alias="i18n/ar.json">i18n/ar.json</file>
         <file alias="i18n/bg.json">i18n/bg.json</file>
         <file alias="i18n/bn.json">i18n/bn.json</file>

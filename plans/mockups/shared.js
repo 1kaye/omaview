@@ -1,4 +1,4 @@
-// Shared pieces for the Omaplay mockups: made-up video frames drawn as SVG,
+// Shared pieces for the Omaview mockups: made-up video frames drawn as SVG,
 // the stroked icon set, and helpers every direction reuses. Nothing here is
 // anyone's real footage.
 

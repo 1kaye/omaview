@@ -21,7 +21,7 @@ Mpris::Mpris(Backend *backend, QObject *parent, const QDBusConnection &bus)
 
     if (!m_bus.isConnected())
         return;
-    const QString name = QStringLiteral("org.mpris.MediaPlayer2.omaplay.instance%1").arg(QCoreApplication::applicationPid());
+    const QString name = QStringLiteral("org.mpris.MediaPlayer2.omaview.instance%1").arg(QCoreApplication::applicationPid());
     if (!m_bus.registerObject(objectPath, this) || !m_bus.registerService(name))
         return;
     m_service = name;
@@ -68,7 +68,7 @@ QVariantMap Mpris::metadata() const {
     if (!m_backend->hasMedia())
         return {};
     // A track id that changes with the file, so clients see a new track.
-    const QString id = QStringLiteral("/org/mpris/MediaPlayer2/omaplay/track/t%1")
+    const QString id = QStringLiteral("/org/mpris/MediaPlayer2/omaview/track/t%1")
                            .arg(qHash(m_backend->source().toString()), 0, 16);
     QVariantMap map{{"mpris:trackid", QVariant::fromValue(QDBusObjectPath(id))},
                     {"xesam:title", m_backend->title()},
