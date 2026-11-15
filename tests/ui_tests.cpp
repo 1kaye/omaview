@@ -581,6 +581,13 @@ private slots:
         QTRY_COMPARE(w->backend->fileName(), QString("2-shell.jpg"));
         QTest::keyClick(w->window, Qt::Key_M, Qt::ControlModifier);
         QTRY_VERIFY(w->window->property("gridShown").toBool());
+        // A file opened from elsewhere puts the grid away to show it.
+        w->backend->open({photos + "/4-mark.svg"});
+        QTRY_VERIFY(!w->window->property("gridShown").toBool());
+        QTRY_COMPARE(w->backend->fileName(), QString("4-mark.svg"));
+        w->backend->open({photos + "/2-shell.jpg"});
+        QTest::keyClick(w->window, Qt::Key_M, Qt::ControlModifier);
+        QTRY_VERIFY(w->window->property("gridShown").toBool());
         QTest::keyClick(w->window, Qt::Key_Escape);
         QTRY_VERIFY(!w->window->property("gridShown").toBool());
         QTest::keyClick(w->window, Qt::Key_Home);
