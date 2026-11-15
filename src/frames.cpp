@@ -231,8 +231,8 @@ QImage readCached(const QString &cache) {
     return image;
 }
 
-// Written whole or not at all, and the cache pruned now and then rather than
-// after every write.
+// Written whole or not at all, and the cache pruned on the first write and
+// every 32nd after, rather than after every one.
 void writeCached(const QImage &image, const QString &cache) {
     if (!QDir().mkpath(previewCacheDirectory()))
         return;
@@ -241,7 +241,9 @@ void writeCached(const QImage &image, const QString &cache) {
         return;
     static std::atomic_int writes{0};
     static QMutex pruning;
-    if (++writes % 32 == 0 && pruning.tryLock()) {
+    // The first write of a run prunes too, so short runs, a small folder
+    // browsed and closed, don't leave the cache to grow.
+    if (writes++ % 32 == 0 && pruning.tryLock()) {
         prunePreviewCache(previewCacheDirectory(), previewCacheLimit);
         pruning.unlock();
     }
