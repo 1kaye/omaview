@@ -12,8 +12,6 @@ FocusScope {
     signal picked(int index)
     signal closed()
 
-    readonly property alias currentIndex: view.currentIndex
-    readonly property alias count: view.count
 
     // Takes every key but the window's Ctrl ones, fullscreen and quit, so
     // the player's keys don't act on the file behind.

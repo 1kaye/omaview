@@ -97,7 +97,6 @@
   "Taken": "Дата съёмки",
   "The XDG desktop portal file chooser is not available.": "Окно выбора файлов XDG desktop portal недоступно.",
   "The portal file picker failed: %1": "Ошибка окна выбора файлов портала: %1",
-  "The stream could not be reached.": "Не удалось подключиться к потоку.",
   "There is no frame at that time.": "В этот момент нет кадра.",
   "This file could not be played.": "Не удалось воспроизвести этот файл.",
   "This picture could not be shown.": "Не удалось показать это изображение.",

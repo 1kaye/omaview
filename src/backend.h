@@ -1,11 +1,9 @@
 #pragma once
 
 #include <QFileSystemWatcher>
-#include <QImage>
 #include <QJsonObject>
 #include <QMutex>
 #include <QObject>
-#include <QPointer>
 #include <QSet>
 #include <QSize>
 #include <QStringList>
@@ -52,7 +50,6 @@ class Backend : public QObject {
     Q_PROPERTY(QString title READ title NOTIFY metadataChanged)
     Q_PROPERTY(QString artist READ artist NOTIFY metadataChanged)
     Q_PROPERTY(QString coverArt READ coverArt NOTIFY metadataChanged)
-    Q_PROPERTY(QString summary READ summary NOTIFY metadataChanged)
     Q_PROPERTY(bool playing READ playing NOTIFY playingChanged)
     Q_PROPERTY(bool loading READ loading NOTIFY statusChanged)
     Q_PROPERTY(bool ended READ ended NOTIFY statusChanged)
@@ -78,7 +75,6 @@ class Backend : public QObject {
     Q_PROPERTY(QVariantList chapters READ chapters NOTIFY infoChanged)
     Q_PROPERTY(QString chapterTitle READ chapterTitle NOTIFY chapterChanged)
     Q_PROPERTY(QVariantList info READ info NOTIFY infoChanged)
-    Q_PROPERTY(qint64 resumedAt READ resumedAt NOTIFY resumedAtChanged)
     Q_PROPERTY(int playlistIndex READ playlistIndex NOTIFY playlistChanged)
     Q_PROPERTY(int playlistCount READ playlistCount NOTIFY playlistChanged)
     Q_PROPERTY(QStringList playlist READ playlist NOTIFY playlistChanged)
@@ -118,7 +114,6 @@ public:
     QString title() const;
     QString artist() const { return m_artist; }
     QString coverArt() const { return m_coverArt; }
-    QString summary() const { return m_summary; }
     bool playing() const;
     bool loading() const;
     bool ended() const { return m_ended; }
@@ -155,8 +150,6 @@ public:
     QSize previewTileSize() const { return m_previewLayout.tileSize; }
     double previewInterval() const { return m_previewLayout.interval; }
     QStringList playlist() const { return m_playlist; }
-    QMediaPlayer *player() const { return m_player; }
-    Positions &positions() { return m_positions; }
 
     // The Omarchy language, for choosing audio and subtitle tracks.
     void setLanguage(const QString &language);
@@ -251,7 +244,6 @@ signals:
     void tracksChanged();
     void chapterChanged();
     void infoChanged();
-    void resumedAtChanged();
     void playlistChanged();
     void previewsChanged();
     void pictureChanged();
@@ -285,7 +277,7 @@ private:
     void resetFile();
     void copyFrame();
     void rememberPosition();
-    enum class Problem { None, Missing, Unreadable, Unplayable, Format, Network, Access, PictureFormat, PictureBroken };
+    enum class Problem { None, Missing, Unreadable, Unplayable, Format, Access, PictureFormat, PictureBroken };
     void setError(Problem problem);
     void labelTracks();
     void emitFileChanged();
@@ -306,6 +298,8 @@ private:
     template <typename Row>
     void buildPictureInfo(Row row);
     void applyVolume();
+    // Opens what open() found, a folder's files already listed.
+    void openItems(const QStringList &items, bool folder);
     void applyBoost();
     void startPreviews();
 
@@ -345,7 +339,6 @@ private:
     QString m_title;
     QString m_artist;
     QString m_coverArt;
-    QString m_summary;
     Problem m_problem = Problem::None;
     bool m_stopped = false;  // MPRIS Stop: back at the start, not merely paused
     qint64 m_position = 0;
@@ -368,6 +361,7 @@ private:
     QTimer m_boostTimer;
     bool m_looping = false;
     bool m_holdPlayback = false;
+    bool m_heldBehindGrid = false;
     bool m_muted = false;
     double m_rate = 1.0;
 

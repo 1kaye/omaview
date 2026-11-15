@@ -58,11 +58,10 @@ Kind kind(const QString &path) {
     return Kind::None;
 }
 
-bool playable(const QString &path) { return kind(path) != Kind::None; }
-bool audioOnly(const QString &path) { return kind(path) == Kind::Audio; }
 bool picture(const QString &path) { return kind(path) == Kind::Picture; }
 
-void sort(QStringList &paths) {
+// Natural, case-insensitive order.
+static void sort(QStringList &paths) {
     QCollator collator;
     collator.setNumericMode(true);
     collator.setCaseSensitivity(Qt::CaseInsensitive);

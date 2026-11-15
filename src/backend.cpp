@@ -1,6 +1,5 @@
 #include "backend.h"
 
-#include <QAudioDevice>
 #include <QAudioOutput>
 #include <QBuffer>
 #include <QClipboard>
@@ -17,7 +16,6 @@
 #include <QProcess>
 #include <QStandardPaths>
 #include <QTemporaryFile>
-#include <QTime>
 #include <QVideoSink>
 #include <QtAudio>
 #include <QtConcurrent>
@@ -234,7 +232,10 @@ QString Backend::nextName() const {
 }
 
 bool Backend::canEdit() const {
-    return m_source.isLocalFile() && !QStandardPaths::findExecutable(m_picture ? "omasnap" : "omacut").isEmpty();
+    // Looked for once: bindings ask on every file.
+    static const bool omasnap = !QStandardPaths::findExecutable("omasnap").isEmpty();
+    static const bool omacut = !QStandardPaths::findExecutable("omacut").isEmpty();
+    return m_source.isLocalFile() && (m_picture ? omasnap : omacut);
 }
 
 QUrl Backend::pictureSource() const {
@@ -331,6 +332,12 @@ void Backend::ensurePlayer() {
     });
 
     connect(m_player, &QMediaPlayer::playbackStateChanged, this, [this] {
+        if (playing() && m_heldBehindGrid) {
+            m_heldBehindGrid = false;
+            m_previewsWanted = m_options.previews && m_loaded;
+            if (m_previewsWanted)
+                m_previewTimer.start();
+        }
         if (playing() && (m_boosted || m_volume > 1.0)) {
             m_boostAgain = true;
             m_boostTimer.start(250);
@@ -367,7 +374,6 @@ void Backend::ensurePlayer() {
             return;
         qWarning("omaview: %s", qPrintable(message));
         setError(error == QMediaPlayer::FormatError          ? Problem::Format
-                 : error == QMediaPlayer::NetworkError       ? Problem::Network
                  : error == QMediaPlayer::AccessDeniedError  ? Problem::Access
                                                              : Problem::Unplayable);
     });
@@ -395,22 +401,39 @@ void Backend::setRhi(QRhi *rhi) {
 }
 
 void Backend::open(const QStringList &arguments) {
-    // Files only: a URL is a stream, which is mpv's job. A folder is its
-    // files, shown as the grid.
-    QStringList items;
+    // Whatever was opened last wins over a folder still being listed.
+    const quint64 list = ++m_listGeneration;
+    // Files only: a URL is a stream, which is mpv's job.
+    QStringList paths;
     bool folder = false;
     for (const QString &argument : arguments) {
         const QUrl url = QUrl::fromUserInput(argument, QDir::currentPath(), QUrl::AssumeLocalFile);
         if (!url.isLocalFile())
             continue;
         const QFileInfo file(url.toLocalFile());
-        if (file.isDir()) {
-            items << playlist::folder(file.absoluteFilePath());
-            folder = true;
-        } else {
-            items << file.absoluteFilePath();
-        }
+        paths << file.absoluteFilePath();
+        folder = folder || file.isDir();
     }
+    if (!folder) {
+        openItems(paths, false);
+        return;
+    }
+    // A folder is its files, shown as the grid, and listed in the background
+    // so a big or slow one never holds up the window.
+    QPointer<Backend> self(this);
+    (void)QtConcurrent::run([self, paths, list] {
+        QEventLoopLocker keepRunning;
+        QStringList items;
+        for (const QString &path : paths)
+            items << (QFileInfo(path).isDir() ? playlist::folder(path) : QStringList{path});
+        QMetaObject::invokeMethod(qApp, [self, items, list] {
+            if (self && self->m_listGeneration == list)
+                self->openItems(items, true);
+        }, Qt::QueuedConnection);
+    });
+}
+
+void Backend::openItems(const QStringList &items, bool folder) {
     if (items.isEmpty()) {
         emit nothingToOpen();
         return;
@@ -445,7 +468,8 @@ void Backend::open(const QStringList &arguments) {
 void Backend::openUrls(const QList<QUrl> &urls) {
     QStringList items;
     for (const QUrl &url : urls)
-        items << (url.isLocalFile() ? url.toLocalFile() : url.toString());
+        if (url.isLocalFile())
+            items << url.toLocalFile();
     open(items);
 }
 
@@ -467,7 +491,6 @@ void Backend::resetFile() {
     m_title.clear();
     m_artist.clear();
     m_coverArt.clear();
-    m_summary.clear();
     m_problem = Problem::None;
     m_stopped = false;
     m_position = 0;
@@ -570,6 +593,7 @@ void Backend::load(int index) {
     emitFileChanged();
     // A folder opens on its grid, so its first video waits, paused, until
     // it's picked.
+    m_heldBehindGrid = hold;
     if (hold)
         m_player->pause();
     else
@@ -668,7 +692,6 @@ void Backend::emitFileChanged() {
     emit tracksChanged();
     emit chapterChanged();
     emit infoChanged();
-    emit resumedAtChanged();
     emit playlistChanged();
     emit previewsChanged();
     emit pictureChanged();
@@ -689,7 +712,6 @@ QString Backend::error() const {
     case Problem::Missing: return tr("%1 doesn't exist.").arg(name);
     case Problem::Unreadable: return tr("%1 can't be read.").arg(name);
     case Problem::Format: return tr("Its format or codec isn't one ffmpeg can play.");
-    case Problem::Network: return tr("The stream could not be reached.");
     case Problem::Access: return tr("Permission to open it was denied.");
     case Problem::PictureFormat: return tr("Its format isn't one Omaview can show.");
     case Problem::PictureBroken: return tr("This picture could not be shown.");
@@ -723,10 +745,11 @@ void Backend::onStatus() {
                 const qint64 target = std::max<qint64>(0, m_pendingResume - 3000);
                 m_player->setPosition(target);
                 emit seeked(target);
-                emit resumedAtChanged();
             }
             m_pendingResume = -1;
-            m_previewsWanted = m_options.previews && m_source.isLocalFile();
+            // A folder's first video, waiting behind its grid, makes its
+            // previews only once it is picked and plays.
+            m_previewsWanted = m_options.previews && m_source.isLocalFile() && !m_heldBehindGrid;
             if (m_previewsWanted)
                 m_previewTimer.start();
         }
@@ -1064,7 +1087,6 @@ void Backend::buildInfo() {
     if (m_probe.bitRate > 0)
         row(tr("Bit rate"), tr("%1 kb/s").arg(locale.toString(m_probe.bitRate / 1000)));
 
-    QStringList summary;
     int audioIndex = 0, subtitleIndex = 0;
     for (const probe::Stream &stream : m_probe.streams) {
         if (stream.type == "video" && !stream.attachedPicture) {
@@ -1074,15 +1096,10 @@ void Backend::buildInfo() {
             if (stream.frameRate > 0)
                 parts << tr("%1 fps").arg(locale.toString(stream.frameRate, 'f', stream.frameRate == std::floor(stream.frameRate) ? 0 : 3));
             row(tr("Video"), join(parts));
-            if (summary.isEmpty())
-                summary << (stream.width > 0 ? QString("%1 × %2").arg(stream.width).arg(stream.height) : QString())
-                        << codecName(stream);
         } else if (stream.type == "audio") {
             ++audioIndex;
             row(tr("Audio %1").arg(audioIndex),
                 join({probe::languageName(stream.language), stream.title, codecName(stream), channelName(stream)}));
-            if (audioIndex == 1 && summary.size() < 3)
-                summary << channelName(stream);
         } else if (stream.type == "subtitle") {
             ++subtitleIndex;
             row(tr("Subtitles %1").arg(subtitleIndex),
@@ -1094,7 +1111,6 @@ void Backend::buildInfo() {
         row(tr("Subtitle file"), QFileInfo(sidecar.path).fileName());
     if (!m_probe.chapters.isEmpty())
         row(tr("Chapters"), QString::number(m_probe.chapters.size()));
-    m_summary = join(summary);
 }
 
 template <typename Row>
@@ -1133,7 +1149,6 @@ void Backend::buildPictureInfo(Row row) {
     else if (exif.focalLength > 0)
         exposure << tr("%1 mm").arg(locale.toString(exif.focalLength, 'f', 0));
     row(tr("Exposure"), join(exposure));
-    m_summary = join({dimensions, info.format, info.bytes > 0 ? locale.formattedDataSize(info.bytes) : QString()});
 }
 
 void Backend::applyVolume() {
@@ -1252,10 +1267,7 @@ void Backend::seekFraction(double fraction) {
 
 void Backend::startOver() {
     setPosition(0);
-    if (m_resumedAt >= 0) {
-        m_resumedAt = -1;
-        emit resumedAtChanged();
-    }
+    m_resumedAt = -1;
 }
 
 void Backend::stepFrame(int direction) {

@@ -27,7 +27,6 @@ public:
     void setWindow(QWindow *window);
 
     // Whether an inhibitor is held on a surface right now, for tests.
-    bool holding() const { return m_inhibitor != nullptr; }
 
     static void registryGlobal(void *data, wl_registry *registry, uint32_t name, const char *interface,
                                uint32_t version);

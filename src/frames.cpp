@@ -1,6 +1,6 @@
 #include "frames.h"
 
-#include <QBuffer>
+#include <QCache>
 #include <QCoreApplication>
 #include <QDateTime>
 #include <QDir>
@@ -23,6 +23,7 @@
 #include <cmath>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <utime.h>
 
 #include "positions.h"
 #include "probe.h"
@@ -221,20 +222,31 @@ void markFailed(const QString &cache) {
     failed.insert(cache);
 }
 
+// Read from the cache, and touched, so pruning removes what hasn't been
+// looked at lately rather than what was made first.
 QImage readCached(const QString &cache) {
-    return QImage(cache);
+    QImage image(cache);
+    if (!image.isNull())
+        (void)::utime(QFile::encodeName(cache).constData(), nullptr);
+    return image;
 }
 
-// Written whole or not at all, and pruned one at a time.
+// Written whole or not at all, and the cache pruned on the first write and
+// every 32nd after, rather than after every one.
 void writeCached(const QImage &image, const QString &cache) {
     if (!QDir().mkpath(previewCacheDirectory()))
         return;
     QSaveFile file(cache);
     if (!file.open(QIODevice::WriteOnly) || !image.save(&file, "JPG", 85) || !file.commit())
         return;
+    static std::atomic_int writes{0};
     static QMutex pruning;
-    QMutexLocker locker(&pruning);
-    prunePreviewCache(previewCacheDirectory(), previewCacheLimit);
+    // The first write of a run prunes too, so short runs, a small folder
+    // browsed and closed, don't leave the cache to grow.
+    if (writes++ % 32 == 0 && pruning.tryLock()) {
+        prunePreviewCache(previewCacheDirectory(), previewCacheLimit);
+        pruning.unlock();
+    }
 }
 
 // The strips' seeks run in a pool of their own, so the app's other work in
@@ -247,6 +259,10 @@ QThreadPool &shotPool() {
     }();
     return *pool;
 }
+
+// The last strips decoded, so a preview's ten frames decode the strip once.
+QMutex stripsLock;
+QCache<QString, QImage> strips(64 * 1024 * 1024);
 
 }  // namespace
 
@@ -284,6 +300,11 @@ QImage makeFilmstrip(const QString &path, const std::atomic_bool *cancelled) {
     const QString cache = cachePath(path, ".strip.jpg");
     if (cache.isEmpty() || hasFailed(cache))
         return {};
+    {
+        QMutexLocker locker(&stripsLock);
+        if (const QImage *kept = strips.object(cache))
+            return *kept;
+    }
     const std::shared_ptr<QMutex> lock = lockFor(cache);
     QMutexLocker locker(lock.get());
     QImage strip = readCached(cache);
@@ -330,6 +351,8 @@ QImage makeFilmstrip(const QString &path, const std::atomic_bool *cancelled) {
         painter.end();
         writeCached(strip, cache);
     }
+    QMutexLocker kept(&stripsLock);
+    strips.insert(cache, new QImage(strip), int(strip.sizeInBytes()));
     return strip;
 }
 
