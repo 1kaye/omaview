@@ -90,6 +90,9 @@ Info parse(const QByteArray &json, const QString &path) {
         stream.title = tag(object, "title");
         stream.width = object.value("width").toInt();
         stream.height = object.value("height").toInt();
+        for (const QJsonValue &data : object.value("side_data_list").toArray())
+            if (data["rotation"].isDouble())
+                stream.rotation = data["rotation"].toInt();
         stream.frameRate = rate(object.value("avg_frame_rate").toString());
         if (stream.frameRate <= 0)
             stream.frameRate = rate(object.value("r_frame_rate").toString());

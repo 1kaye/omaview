@@ -8,6 +8,9 @@
 #include <QEventLoopLocker>
 #include <QFileInfo>
 #include <QGuiApplication>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QLocale>
 #include <QMediaMetaData>
 #include <QMediaPlayer>
@@ -127,7 +130,14 @@ Backend::Backend(const Options &options, QObject *parent)
     // another window holding the file's lock never stalls the picture.
     m_writer.setMaxThreadCount(1);
     m_preferences = m_positions.preferences();
-    m_volume = std::clamp(m_preferences.value("volume").toDouble(1.0), 0.0, 1.0);
+    if (!QStandardPaths::findExecutable("pw-dump").isEmpty() && !QStandardPaths::findExecutable("wpctl").isEmpty())
+        m_maxVolume = 1.5;
+    m_volume = std::clamp(m_preferences.value("volume").toDouble(1.0), 0.0, m_maxVolume);
+    // A new stream starts at its own level, so a boost is set again once it
+    // plays, and a drag of the volume asks PipeWire once it pauses.
+    m_boostTimer.setSingleShot(true);
+    m_boostTimer.setInterval(250);
+    connect(&m_boostTimer, &QTimer::timeout, this, &Backend::applyBoost);
     m_muted = m_preferences.value("muted").toBool(false);
     m_preferenceTimer.setSingleShot(true);
     m_preferenceTimer.setInterval(500);
@@ -216,11 +226,6 @@ bool Backend::playing() const {
 
 bool Backend::loading() const {
     return m_player && m_player->mediaStatus() == QMediaPlayer::LoadingMedia;
-}
-
-bool Backend::buffering() const {
-    return m_player && (m_player->mediaStatus() == QMediaPlayer::BufferingMedia
-                        || m_player->mediaStatus() == QMediaPlayer::StalledMedia);
 }
 
 QString Backend::nextName() const {
@@ -315,7 +320,11 @@ void Backend::ensurePlayer() {
         updateSubtitleText();
     });
 
-    connect(m_player, &QMediaPlayer::playbackStateChanged, this, [this] { emit playingChanged(); });
+    connect(m_player, &QMediaPlayer::playbackStateChanged, this, [this] {
+        if (playing() && m_boosted)
+            m_boostTimer.start();
+        emit playingChanged();
+    });
     connect(m_player, &QMediaPlayer::mediaStatusChanged, this, &Backend::onStatus);
     connect(m_player, &QMediaPlayer::positionChanged, this, [this](qint64 ms) {
         if (m_ended && m_player->mediaStatus() == QMediaPlayer::EndOfMedia)
@@ -374,20 +383,36 @@ void Backend::setRhi(QRhi *rhi) {
 }
 
 void Backend::open(const QStringList &arguments) {
+    // Files only: a URL is a stream, which is mpv's job. A folder is its
+    // files, shown as the grid.
     QStringList items;
+    bool folder = false;
     for (const QString &argument : arguments) {
         const QUrl url = QUrl::fromUserInput(argument, QDir::currentPath(), QUrl::AssumeLocalFile);
-        items << (url.isLocalFile() ? QFileInfo(url.toLocalFile()).absoluteFilePath() : url.toString());
+        if (!url.isLocalFile())
+            continue;
+        const QFileInfo file(url.toLocalFile());
+        if (file.isDir()) {
+            items << playlist::folder(file.absoluteFilePath());
+            folder = true;
+        } else {
+            items << file.absoluteFilePath();
+        }
     }
-    if (items.isEmpty())
+    if (items.isEmpty()) {
+        emit nothingToOpen();
         return;
+    }
     rememberPosition();
     m_playlist = items;
     m_index = -1;
+    m_holdPlayback = folder;
     load(0);
+    if (folder)
+        emit folderOpened();
     // One file brings its folder, which is listed in the background so a big
     // or slow folder never holds up the picture.
-    if (items.size() == 1 && m_source.isLocalFile()) {
+    if (items.size() == 1 && !folder && m_source.isLocalFile()) {
         const QString file = items.first();
         const quint64 list = ++m_listGeneration;
         QPointer<Backend> self(this);
@@ -481,6 +506,9 @@ void Backend::load(int index) {
     if (index < 0 || index >= m_playlist.size())
         return;
     m_index = index;
+    // Only the file a folder opens on waits; whatever loads first, picture
+    // or video, uses the hold up.
+    const bool hold = std::exchange(m_holdPlayback, false);
     const QString item = m_playlist.at(index);
     if (playlist::picture(item)) {
         loadPicture(item);
@@ -524,9 +552,15 @@ void Backend::load(int index) {
     if (m_player->source() == m_source)
         m_player->setSource(QUrl());
     m_player->setSource(m_source);
+    m_player->setLoops(m_looping ? QMediaPlayer::Infinite : QMediaPlayer::Once);
     m_player->setPlaybackRate(m_rate);
     emitFileChanged();
-    m_player->play();
+    // A folder opens on its grid, so its first video waits, paused, until
+    // it's picked.
+    if (hold)
+        m_player->pause();
+    else
+        m_player->play();
 }
 
 // A picture never starts the player: one already playing a video stops and
@@ -1081,9 +1115,44 @@ void Backend::applyVolume() {
     if (!m_audio)
         return;
     // Steps that sound even: the slider is perceptual, the output linear.
-    m_audio->setVolume(float(QtAudio::convertVolume(m_volume, QtAudio::LogarithmicVolumeScale,
+    m_audio->setVolume(float(QtAudio::convertVolume(std::min(m_volume, 1.0), QtAudio::LogarithmicVolumeScale,
                                                     QtAudio::LinearVolumeScale)));
     m_audio->setMuted(m_muted);
+    if (m_volume > 1.0 || m_boosted)
+        m_boostTimer.start();
+}
+
+// Qt's output stops at the file's own level. Past it, the stream's volume in
+// PipeWire is raised, as a mixer would, and set back once it isn't needed.
+void Backend::applyBoost() {
+    if (!m_audio)
+        return;
+    const double gain = std::max(1.0, m_volume);
+    m_boosted = gain > 1.0;
+    const quint64 generation = ++m_boostGeneration;
+    auto *dump = new QProcess(this);
+    connect(dump, &QProcess::finished, this, [this, dump, gain, generation] {
+        dump->deleteLater();
+        if (generation != m_boostGeneration)
+            return;
+        const QJsonArray objects = QJsonDocument::fromJson(dump->readAllStandardOutput()).array();
+        QHash<qint64, QJsonObject> props;
+        for (const QJsonValue &object : objects)
+            props.insert(object["id"].toInteger(), object["info"]["props"].toObject());
+        const qint64 pid = QCoreApplication::applicationPid();
+        for (auto it = props.cbegin(); it != props.cend(); ++it) {
+            if (it->value("media.class").toString() != "Stream/Output/Audio" || !it->contains("client.id"))
+                continue;
+            // The stream names its process, or its client does.
+            QJsonValue owner = it->value("application.process.id");
+            if (owner.isUndefined())
+                owner = props.value(it->value("client.id").toInteger()).value("application.process.id");
+            if (owner.toVariant().toLongLong() == pid)
+                QProcess::startDetached("wpctl", {"set-volume", QString::number(it.key()), QString::number(gain, 'f', 2)});
+        }
+    });
+    connect(dump, &QProcess::errorOccurred, dump, &QObject::deleteLater);
+    dump->start("pw-dump", {});
 }
 
 void Backend::togglePlay() {
@@ -1195,7 +1264,7 @@ void Backend::resetRate() {
 }
 
 void Backend::setVolume(double volume) {
-    m_volume = std::clamp(volume, 0.0, 1.0);
+    m_volume = std::clamp(volume, 0.0, m_maxVolume);
     if (m_muted && m_volume > 0)
         m_muted = false;
     applyVolume();
@@ -1206,6 +1275,13 @@ void Backend::setVolume(double volume) {
 
 void Backend::changeVolume(double delta) {
     setVolume(std::round((m_volume + delta) * 100) / 100);
+}
+
+void Backend::toggleLoop() {
+    m_looping = !m_looping;
+    if (m_player)
+        m_player->setLoops(m_looping ? QMediaPlayer::Infinite : QMediaPlayer::Once);
+    emit loopingChanged();
 }
 
 void Backend::toggleMute() {
@@ -1235,6 +1311,15 @@ bool Backend::next() {
 
 bool Backend::previous() {
     return go(m_index - 1);
+}
+
+QString Backend::kindOf(const QString &path) const {
+    switch (playlist::kind(path)) {
+    case playlist::Kind::Picture: return QStringLiteral("picture");
+    case playlist::Kind::Video: return QStringLiteral("video");
+    case playlist::Kind::Audio: return QStringLiteral("audio");
+    default: return {};
+    }
 }
 
 bool Backend::go(int index) {
@@ -1318,13 +1403,6 @@ void Backend::saveFrame() {
     const QString base = m_source.isLocalFile() ? QFileInfo(m_source.toLocalFile()).completeBaseName() : "omaview";
     const QString name = QString("%1-%2.png").arg(base, clock(m_position).replace(':', '-'));
     m_picker->saveImage(QUrl::fromLocalFile(folder + "/" + name));
-}
-
-bool Backend::takeFirstRunHint() {
-    if (m_preferences.value("hinted").toBool())
-        return false;
-    setPreference("hinted", true);
-    return true;
 }
 
 void Backend::edit() {

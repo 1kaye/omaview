@@ -26,6 +26,7 @@
 #include "backend.h"
 #include "cli.h"
 #include "exif.h"
+#include "fixtures.h"
 #include "frames.h"
 #include "mpris.h"
 #include "picture.h"
@@ -43,77 +44,16 @@ bool write(const QString &path, const QByteArray &contents) {
     return file.open(QIODevice::WriteOnly) && file.write(contents) == contents.size();
 }
 
-// A camera's EXIF, as the TIFF structure inside a JPEG's APP1 segment.
-struct Tag {
-    quint16 tag;
-    quint16 type;
-    quint32 count;
-    QByteArray value;
-};
-Tag ascii(quint16 tag, const QByteArray &text) { return {tag, 2, quint32(text.size() + 1), text + '\0'}; }
-Tag shortTag(quint16 tag, quint16 value) {
-    QByteArray bytes(2, 0);
-    qToLittleEndian(value, bytes.data());
-    return {tag, 3, 1, bytes};
-}
-Tag longTag(quint16 tag, quint32 value) {
-    QByteArray bytes(4, 0);
-    qToLittleEndian(value, bytes.data());
-    return {tag, 4, 1, bytes};
-}
-Tag rational(quint16 tag, quint32 numerator, quint32 denominator) {
-    QByteArray bytes(8, 0);
-    qToLittleEndian(numerator, bytes.data());
-    qToLittleEndian(denominator, bytes.data() + 4);
-    return {tag, 5, 1, bytes};
-}
-
-QByteArray tiff(QList<Tag> image, const QList<Tag> &photo) {
-    const quint32 imageAt = 8, photoAt = imageAt + 2 + quint32(image.size() + 1) * 12 + 4;
-    const quint32 dataAt = photoAt + 2 + quint32(photo.size()) * 12 + 4;
-    image.append(longTag(0x8769, photoAt));
-    QByteArray out("II*\0", 4), data;
-    auto u16 = [&](quint16 v) { QByteArray b(2, 0); qToLittleEndian(v, b.data()); out += b; };
-    auto u32 = [&](quint32 v) { QByteArray b(4, 0); qToLittleEndian(v, b.data()); out += b; };
-    u32(imageAt);
-    for (const QList<Tag> &ifd : {image, photo}) {
-        u16(quint16(ifd.size()));
-        for (const Tag &tag : ifd) {
-            u16(tag.tag);
-            u16(tag.type);
-            u32(tag.count);
-            if (tag.value.size() <= 4) {
-                out += tag.value + QByteArray(4 - tag.value.size(), 0);
-            } else {
-                u32(dataAt + quint32(data.size()));
-                data += tag.value;
-            }
-        }
-        u32(0);
-    }
-    return out + data;
-}
-
 // A photo of a size as stored, with a camera's EXIF: an orientation of 6
 // means it is shown turned a quarter clockwise.
 bool writePhoto(const QString &path, QSize stored, quint16 orientation) {
+    using namespace fixtures;
     QImage image(stored, QImage::Format_RGB32);
     image.fill(Qt::darkCyan);
-    QByteArray jpeg;
-    QBuffer buffer(&jpeg);
-    buffer.open(QIODevice::WriteOnly);
-    if (!image.save(&buffer, "JPEG"))
-        return false;
-    const QByteArray exif = QByteArray("Exif\0\0", 6)
-                            + tiff({ascii(0x010F, "Canon"), ascii(0x0110, "Canon EOS R5"), shortTag(0x0112, orientation)},
-                                   {rational(0x829A, 1, 250), rational(0x829D, 28, 10), shortTag(0x8827, 400),
-                                    ascii(0x9003, "2026:07:14 18:30:05"), rational(0x920A, 50, 1),
-                                    shortTag(0xA405, 50), ascii(0xA434, "RF50mm F1.8 STM")});
-    QByteArray segment("\xFF\xE1");
-    segment += char((exif.size() + 2) >> 8);
-    segment += char((exif.size() + 2) & 0xFF);
-    jpeg.insert(2, segment + exif);
-    return write(path, jpeg);
+    return write(path, jpegWithExif(image, {ascii(0x010F, "Canon"), ascii(0x0110, "Canon EOS R5"), shortTag(0x0112, orientation)},
+                                    {rational(0x829A, 1, 250), rational(0x829D, 28, 10), shortTag(0x8827, 400),
+                                     ascii(0x9003, "2026:07:14 18:30:05"), rational(0x920A, 50, 1),
+                                     shortTag(0xA405, 50), ascii(0xA434, "RF50mm F1.8 STM")}));
 }
 
 int lines(const QString &path) {
@@ -431,7 +371,19 @@ private slots:
         QCOMPARE(names("IMG_2.jpg"), photos);
         QCOMPARE(names("memo.m4a"), (QStringList{"IMG_3.mov", "memo.m4a"}));
         QVERIFY(!playlist::playable("scan.pdf"));
-        QVERIFY(playlist::picture("https://example.com/photo.webp?w=800"));
+        // A folder opened as itself is its pictures and videos; one of songs,
+        // its songs and videos.
+        QStringList folder;
+        for (const QString &path : playlist::folder(dir.path()))
+            folder << QFileInfo(path).fileName();
+        QCOMPARE(folder, photos);
+        QTemporaryDir album;
+        for (const char *name : {"2 b.flac", "1 a.flac", "live.mkv"})
+            QVERIFY(write(album.filePath(name), "x"));
+        folder.clear();
+        for (const QString &path : playlist::folder(album.path()))
+            folder << QFileInfo(path).fileName();
+        QCOMPARE(folder, (QStringList{"1 a.flac", "2 b.flac", "live.mkv"}));
     }
 
     // Pictures
@@ -473,6 +425,29 @@ private slots:
         QVERIFY(picture::read(dir.filePath("clear.png")).transparent);
         QVERIFY(write(dir.filePath("broken.png"), "not a picture"));
         QVERIFY(!picture::read(dir.filePath("broken.png")).ok());
+    }
+
+    void aFolderWaitsOnlyOnItsFirstFile() {
+        // A folder opening on a picture: the video picked after it plays.
+        QTemporaryDir state, folder;
+        QVERIFY(QFile::copy(m_picture, folder.filePath("a.jpg")));
+        QVERIFY(QFile::copy(m_clip, folder.filePath("b.mkv")));
+        Backend::Options options;
+        options.positionsPath = state.filePath("positions.json");
+        options.audio = false;
+        options.previews = false;
+        Backend backend(options);
+        QSignalSpy opened(&backend, &Backend::folderOpened);
+        backend.open({folder.path()});
+        QCOMPARE(opened.count(), 1);
+        QVERIFY(backend.isPicture());
+        QVERIFY(backend.go(1));
+        QTRY_VERIFY_WITH_TIMEOUT(backend.playing(), 10000);
+        // An empty folder opens nothing, and says so.
+        QTemporaryDir empty;
+        QSignalSpy nothing(&backend, &Backend::nothingToOpen);
+        backend.open({empty.path()});
+        QCOMPARE(nothing.count(), 1);
     }
 
     void aPictureNeverStartsThePlayer() {
@@ -653,6 +628,19 @@ private slots:
         const QString out = m_home.filePath("frame.png");
         QVERIFY(frames::savePng(frame, out, &error));
         QCOMPARE(QImage(out).size(), QSize(320, 180));
+    }
+
+    void theGridHasAPosterAndAFilmstrip() {
+        const QImage poster = frames::poster(m_clip);
+        QCOMPARE(poster.width(), 640);
+        // Ten frames from across the video, each its own, made once.
+        const QImage first = frames::filmstripFrame(m_clip, 0);
+        const QImage last = frames::filmstripFrame(m_clip, frames::filmstripFrames - 1);
+        QCOMPARE(first.width(), 320);
+        QCOMPARE(last.size(), first.size());
+        QVERIFY(first != last);
+        QVERIFY(frames::filmstripFrame(m_clip, frames::filmstripFrames).isNull());
+        QVERIFY(QFileInfo::exists(frames::previewCacheDirectory() + "/" + Positions::key(m_clip) + ".strip.jpg"));
     }
 
     // Previews

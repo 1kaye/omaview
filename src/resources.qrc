@@ -5,6 +5,7 @@
         <file alias="ControlButton.qml">ControlButton.qml</file>
         <file alias="Timeline.qml">Timeline.qml</file>
         <file alias="PictureView.qml">PictureView.qml</file>
+        <file alias="MediaGrid.qml">MediaGrid.qml</file>
         <file alias="checker.svg">checker.svg</file>
         <file alias="Icon.qml">Icon.qml</file>
         <file alias="Format.js">Format.js</file>

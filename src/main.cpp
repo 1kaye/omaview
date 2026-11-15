@@ -1,6 +1,12 @@
 // Omaview — Omarchy's picture viewer and media player, Media Viewer in the launcher: open a picture, a video
 // or a song and look at it, from the keyboard, with nothing on screen but the picture.
 
+#include <QDir>
+#include <QEventLoopLocker>
+#include <QFileInfo>
+#include <QPointer>
+#include <QtConcurrent>
+#include <cmath>
 #include <QGuiApplication>
 #include <QIcon>
 #include <QQmlApplicationEngine>
@@ -14,6 +20,9 @@
 #include "cli.h"
 #include "inhibit.h"
 #include "mpris.h"
+#include "playlist.h"
+#include "probe.h"
+#include "thumbnails.h"
 #include "theme.h"
 #include "translator.h"
 
@@ -66,6 +75,19 @@ int main(int argc, char *argv[]) {
     engine.rootContext()->setContextProperty("theme", &theme);
     engine.rootContext()->setContextProperty("backend", &backend);
     engine.rootContext()->setContextProperty("idle", &idle);
+    // `omaview open a.mkv` and `omaview a.mkv`, which launchers use, alike.
+    QStringList files = app.arguments().mid(1);
+    if (!files.isEmpty() && files.first() == "open")
+        files.removeFirst();
+    // A picture never starts the player, so it opens before the window
+    // shows, which then waits for it.
+    const bool picture = !files.isEmpty() && playlist::picture(files.first());
+    // A local video or song is measured first too, so the window opens at
+    // its shape rather than at a default and then changing.
+    const QUrl firstUrl = files.isEmpty() ? QUrl() : QUrl::fromUserInput(files.first(), QDir::currentPath(), QUrl::AssumeLocalFile);
+    const bool measure = !picture && firstUrl.isLocalFile() && !QFileInfo(firstUrl.toLocalFile()).isDir();
+    engine.setInitialProperties({{"opening", !files.isEmpty()}, {"holding", picture || measure}});
+    engine.addImageProvider("thumbnail", new ThumbnailProvider);
     engine.load(QUrl("qrc:/Main.qml"));
     if (engine.rootObjects().isEmpty())
         return 1;
@@ -85,15 +107,37 @@ int main(int argc, char *argv[]) {
     });
     QObject::connect(&app, &QCoreApplication::aboutToQuit, &backend, &Backend::close);
 
-    // `omaview open a.mkv` and `omaview a.mkv`, which launchers use, alike.
-    // The file opens once the window has drawn, since starting the player
-    // probes the GPU's decoders on this thread.
-    QStringList files = app.arguments().mid(1);
-    if (!files.isEmpty() && files.first() == "open")
-        files.removeFirst();
-    if (!files.isEmpty())
+    // A video or a song opens once the window has drawn, since starting the
+    // player probes the GPU's decoders on this thread.
+    if (picture) {
+        // Work in the background lets the app quit when it finishes with no
+        // window showing, so the hidden window holds it until it shows.
+        auto *hold = new QEventLoopLocker;
+        QObject::connect(window, &QWindow::visibleChanged, window, [hold](bool visible) {
+            if (visible)
+                delete hold;
+        }, Qt::SingleShotConnection);
+        backend.open(files);
+    }
+    else if (!files.isEmpty())
         QObject::connect(window, &QQuickWindow::frameSwapped, &backend, [&backend, files] { backend.open(files); },
                          Qt::ConnectionType(Qt::QueuedConnection | Qt::SingleShotConnection));
+    if (measure) {
+        QPointer<QQuickWindow> target(window);
+        (void)QtConcurrent::run([target, path = firstUrl.toLocalFile()] {
+            const probe::Info info = probe::run(path, 3000);
+            const probe::Stream *video = info.video();
+            QSize size = video ? QSize(video->width, video->height) : QSize();
+            if (video && std::abs(video->rotation) % 180 == 90)
+                size.transpose();
+            const bool song = info.ok() && !video;
+            QMetaObject::invokeMethod(qApp, [target, size, song] {
+                if (target)
+                    QMetaObject::invokeMethod(target, "openAt", Q_ARG(QVariant, size.width()),
+                                              Q_ARG(QVariant, size.height()), Q_ARG(QVariant, song));
+            }, Qt::QueuedConnection);
+        });
+    }
 
     return app.exec();
 }

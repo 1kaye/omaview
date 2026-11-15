@@ -55,7 +55,6 @@ class Backend : public QObject {
     Q_PROPERTY(QString summary READ summary NOTIFY metadataChanged)
     Q_PROPERTY(bool playing READ playing NOTIFY playingChanged)
     Q_PROPERTY(bool loading READ loading NOTIFY statusChanged)
-    Q_PROPERTY(bool buffering READ buffering NOTIFY statusChanged)
     Q_PROPERTY(bool ended READ ended NOTIFY statusChanged)
     Q_PROPERTY(qint64 position READ position NOTIFY positionChanged)
     Q_PROPERTY(qint64 duration READ duration NOTIFY durationChanged)
@@ -64,6 +63,10 @@ class Backend : public QObject {
     Q_PROPERTY(QSize videoSize READ videoSize NOTIFY videoSizeChanged)
     Q_PROPERTY(double volume READ volume NOTIFY volumeChanged)
     Q_PROPERTY(bool muted READ muted NOTIFY volumeChanged)
+    // 1 is the file's own level; above it, up to 1.5, is a boost, where
+    // PipeWire's wpctl is at hand to raise the stream past what Qt allows.
+    Q_PROPERTY(double maxVolume READ maxVolume CONSTANT)
+    Q_PROPERTY(bool looping READ looping NOTIFY loopingChanged)
     Q_PROPERTY(double rate READ rate NOTIFY rateChanged)
     Q_PROPERTY(QString error READ error NOTIFY errorChanged)
     Q_PROPERTY(bool stopped READ stopped NOTIFY playingChanged)
@@ -78,6 +81,7 @@ class Backend : public QObject {
     Q_PROPERTY(qint64 resumedAt READ resumedAt NOTIFY resumedAtChanged)
     Q_PROPERTY(int playlistIndex READ playlistIndex NOTIFY playlistChanged)
     Q_PROPERTY(int playlistCount READ playlistCount NOTIFY playlistChanged)
+    Q_PROPERTY(QStringList playlist READ playlist NOTIFY playlistChanged)
     Q_PROPERTY(QString nextName READ nextName NOTIFY playlistChanged)
     Q_PROPERTY(bool canEdit READ canEdit NOTIFY mediaChanged)
     Q_PROPERTY(QUrl previewSource READ previewSource NOTIFY previewsChanged)
@@ -117,7 +121,6 @@ public:
     QString summary() const { return m_summary; }
     bool playing() const;
     bool loading() const;
-    bool buffering() const;
     bool ended() const { return m_ended; }
     qint64 position() const { return m_position; }
     qint64 duration() const { return m_duration; }
@@ -125,6 +128,8 @@ public:
     bool hasVideo() const { return m_hasVideo; }
     QSize videoSize() const { return m_videoSize; }
     double volume() const { return m_volume; }
+    double maxVolume() const { return m_maxVolume; }
+    bool looping() const { return m_looping; }
     bool muted() const { return m_muted; }
     double rate() const { return m_rate; }
     // Translated when read, so a language switch re-renders it.
@@ -175,12 +180,16 @@ public:
     Q_INVOKABLE void setVolume(double volume);
     Q_INVOKABLE void changeVolume(double delta);
     Q_INVOKABLE void toggleMute();
+    // Plays the file over and over, and every file after it, until turned off.
+    Q_INVOKABLE void toggleLoop();
     Q_INVOKABLE void cycleSubtitles();
     Q_INVOKABLE void cycleAudio();
     Q_INVOKABLE bool next();
     Q_INVOKABLE bool previous();
     // Any file in the playlist, for the first and the last.
     Q_INVOKABLE bool go(int index);
+    // "picture", "video" or "audio", for the grid's tiles.
+    Q_INVOKABLE QString kindOf(const QString &path) const;
     Q_INVOKABLE void jumpChapter(int direction);
     Q_INVOKABLE QString chapterAt(qint64 ms) const;
     // The picture, turned as it shows, or the video's frame on screen.
@@ -198,8 +207,6 @@ public:
     Q_INVOKABLE bool undoTrash();
     // The window couldn't decode the picture.
     Q_INVOKABLE void pictureFailed();
-    // True once, the first time any file is opened, for the "Press Tab" hint.
-    Q_INVOKABLE bool takeFirstRunHint();
     // The window's VideoOutput, once its Loader has made it, and null as it
     // goes.
     Q_INVOKABLE void setVideoSink(QVideoSink *sink);
@@ -230,6 +237,12 @@ signals:
     void hasVideoChanged();
     void videoSizeChanged();
     void volumeChanged();
+    // A folder was opened: the window shows it as the grid.
+    void folderOpened();
+    // Nothing given could be opened, as an empty folder: the window stops
+    // waiting for a file.
+    void nothingToOpen();
+    void loopingChanged();
     void rateChanged();
     void errorChanged();
     void subtitleTextChanged();
@@ -291,6 +304,7 @@ private:
     template <typename Row>
     void buildPictureInfo(Row row);
     void applyVolume();
+    void applyBoost();
     void startPreviews();
 
     Options m_options;
@@ -339,7 +353,15 @@ private:
     bool m_ended = false;
     bool m_loaded = false;
     QSize m_videoSize;
-    double m_volume = 1.0;  // perceptual, 0 to 1
+    double m_volume = 1.0;  // perceptual, 0 to maxVolume
+    double m_maxVolume = 1.0;
+    // The stream's own volume may be raised. True at first, since WirePlumber
+    // gives a new stream the volume it last had, a boost included.
+    bool m_boosted = true;
+    quint64 m_boostGeneration = 0;
+    QTimer m_boostTimer;
+    bool m_looping = false;
+    bool m_holdPlayback = false;
     bool m_muted = false;
     double m_rate = 1.0;
 

@@ -7,8 +7,6 @@ import "Format.js" as Format
 Item {
     id: timeline
     property bool expanded: false
-    // Show the time and chapter at the playhead, as after a key seek.
-    property bool labelAtPlayhead: false
     property bool hovering: hover.hovered
     readonly property bool usable: backend.seekable && backend.duration > 0
     readonly property real fraction: backend.duration > 0 ? Math.min(1, backend.position / backend.duration) : 0
@@ -60,7 +58,7 @@ Item {
     Column {
         id: preview
         readonly property bool pointing: timeline.hoverFraction >= 0 || timeline.dragFraction >= 0
-        visible: timeline.usable && timeline.expanded && (pointing || timeline.labelAtPlayhead)
+        visible: timeline.usable && timeline.expanded && pointing
         readonly property real at: timeline.dragFraction >= 0 ? timeline.dragFraction
                                    : timeline.hoverFraction >= 0 ? timeline.hoverFraction : timeline.fraction
         readonly property int tile: backend.previewCount > 0

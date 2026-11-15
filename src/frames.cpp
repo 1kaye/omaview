@@ -7,6 +7,8 @@
 #include <QEventLoopLocker>
 #include <QFile>
 #include <QFileInfo>
+#include <QHash>
+#include <QMutex>
 #include <QPainter>
 #include <QPointer>
 #include <QProcess>
@@ -14,6 +16,7 @@
 #include <QStandardPaths>
 #include <QtConcurrent>
 #include <algorithm>
+#include <numeric>
 #include <cmath>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -179,6 +182,106 @@ QString previewCachePath(const QString &videoPath) {
     return key.isEmpty() ? QString() : previewCacheDirectory() + "/" + key + ".jpg";
 }
 
+QImage poster(const QString &path, const std::atomic_bool *cancelled) {
+    const QString key = Positions::key(path);
+    const QString cache = key.isEmpty() ? QString() : previewCacheDirectory() + "/" + key + ".poster.jpg";
+    if (!cache.isEmpty()) {
+        const QImage cached(cache);
+        if (!cached.isNull())
+            return cached;
+    }
+    QImage image;
+    // A clip shorter than the first try has its first frame.
+    for (const QString &at : {QStringLiteral("3"), QStringLiteral("0")}) {
+        const QByteArray png = ffmpeg({"-ss", at, "-i", path, "-map", "0:V:0", "-frames:v", "1", "-vf", "scale=640:-2",
+                                       "-f", "image2pipe", "-c:v", "png", "-"},
+                                      20000, nullptr, true, cancelled);
+        image = QImage::fromData(png, "PNG");
+        if (!image.isNull() || (cancelled && *cancelled))
+            break;
+    }
+    if (!image.isNull() && !cache.isEmpty() && QDir().mkpath(previewCacheDirectory())) {
+        image.save(cache, "JPG", 85);
+        prunePreviewCache(previewCacheDirectory(), previewCacheLimit);
+    }
+    return image;
+}
+
+namespace {
+
+QString filmstripPath(const QString &path) {
+    const QString key = Positions::key(path);
+    return key.isEmpty() ? QString() : previewCacheDirectory() + "/" + key + ".strip.jpg";
+}
+
+// One lock per video, so asking for a strip that is being made waits for it
+// rather than making it twice, and never waits on another video's.
+std::shared_ptr<QMutex> filmstripLock(const QString &path) {
+    static QMutex guard;
+    static QHash<QString, std::weak_ptr<QMutex>> locks;
+    QMutexLocker locker(&guard);
+    std::shared_ptr<QMutex> lock = locks.value(path).lock();
+    if (!lock) {
+        lock = std::make_shared<QMutex>();
+        locks.insert(path, lock);
+    }
+    return lock;
+}
+
+}  // namespace
+
+QImage makeFilmstrip(const QString &path, const std::atomic_bool *cancelled) {
+    const QString cache = filmstripPath(path);
+    if (cache.isEmpty())
+        return {};
+    const std::shared_ptr<QMutex> lock = filmstripLock(path);
+    QMutexLocker locker(lock.get());
+    QImage strip(cache);
+    if (!strip.isNull())
+        return strip;
+    const double duration = probe::run(path, 5000, cancelled).duration;
+    if (duration <= 0)
+        return {};
+    // The ten seeks run side by side. In a long video each takes the
+    // keyframe at or before its time, which needs no decoding past it; a
+    // short one, whose keyframes may be far apart, is decoded to the frame.
+    const bool keyframes = duration > 60;
+    QList<int> indices(filmstripFrames);
+    std::iota(indices.begin(), indices.end(), 0);
+    const QList<QImage> shots = QtConcurrent::blockingMapped(indices, [&](int i) {
+        QStringList arguments;
+        if (keyframes)
+            arguments << "-skip_frame" << "nokey" << "-noaccurate_seek";
+        arguments << "-ss" << seconds(duration * (i + 0.5) / filmstripFrames) << "-i" << path << "-map" << "0:V:0"
+                  << "-frames:v" << "1" << "-vf" << "scale=320:-2" << "-f" << "image2pipe" << "-c:v" << "png" << "-";
+        return QImage::fromData(ffmpeg(arguments, 20000, nullptr, true, cancelled), "PNG");
+    });
+    if (std::any_of(shots.begin(), shots.end(), [](const QImage &shot) { return shot.isNull(); }))
+        return {};
+    const QSize size = shots.first().size();
+    strip = QImage(size.width() * filmstripFrames, size.height(), QImage::Format_RGB32);
+    strip.fill(Qt::black);
+    QPainter painter(&strip);
+    for (int i = 0; i < filmstripFrames; ++i)
+        painter.drawImage(QRect(QPoint(i * size.width(), 0), size), shots[i]);
+    painter.end();
+    if (QDir().mkpath(previewCacheDirectory())) {
+        strip.save(cache, "JPG", 85);
+        prunePreviewCache(previewCacheDirectory(), previewCacheLimit);
+    }
+    return strip;
+}
+
+QImage filmstripFrame(const QString &path, int n, const std::atomic_bool *cancelled) {
+    if (n < 0 || n >= filmstripFrames)
+        return {};
+    const QImage strip = makeFilmstrip(path, cancelled);
+    if (strip.isNull())
+        return {};
+    const int width = strip.width() / filmstripFrames;
+    return strip.copy(n * width, 0, width, strip.height());
+}
+
 void prunePreviewCache(const QString &directory, qint64 limitBytes) {
     QFileInfoList files = QDir(directory).entryInfoList({"*.jpg"}, QDir::Files, QDir::Time | QDir::Reversed);
     qint64 total = 0;
@@ -266,7 +369,7 @@ void Previews::start(const QString &path, double duration, QSize videoSize) {
         out.setDirectWriteFallback(false);
         if (!out.open(QIODevice::WriteOnly) || !atlas.save(&out, "JPG", 80) || !out.commit())
             return;
-        prunePreviewCache(previewCacheDirectory(), 256LL * 1024 * 1024);
+        prunePreviewCache(previewCacheDirectory(), previewCacheLimit);
         QMetaObject::invokeMethod(
             qApp,
             [self, generation, cachePath, layout] {

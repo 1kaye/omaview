@@ -31,7 +31,6 @@ The exact frame at that time, at the video's own resolution, as a PNG. `--at` ta
 ```bash
 omaview open photo.jpg          # one file opens with its folder to step through
 omaview open a.mkv b.jpg        # several files are the playlist, in that order
-omaview open https://example.com/stream.m3u8
 ```
 
 This opens a window on the user's desktop; only do it when they asked to see something.
