@@ -43,6 +43,8 @@ QImage filmstripFrame(const QString &path, int n, const std::atomic_bool *cancel
 // The whole strip, made if it isn't cached yet; the grid starts it for each
 // video as its tile shows, so it is ready by the time it is picked.
 QImage makeFilmstrip(const QString &path, const std::atomic_bool *cancelled = nullptr);
+// Whether its strip is cached already, or was tried and can't be made.
+bool filmstripTried(const QString &path);
 
 QString previewCacheDirectory();
 // The previews, posters and strips together stay under this.

@@ -353,12 +353,14 @@ private:
     bool m_ended = false;
     bool m_loaded = false;
     QSize m_videoSize;
+    // The file's metadata turns its frames a quarter, as a phone's does.
+    bool m_videoTurned = false;
     double m_volume = 1.0;  // perceptual, 0 to maxVolume
     double m_maxVolume = 1.0;
     // The stream's own volume may be raised. True at first, since WirePlumber
     // gives a new stream the volume it last had, a boost included.
     bool m_boosted = true;
-    quint64 m_boostGeneration = 0;
+    bool m_boostAgain = false;
     QTimer m_boostTimer;
     bool m_looping = false;
     bool m_holdPlayback = false;

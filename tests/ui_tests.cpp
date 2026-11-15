@@ -555,6 +555,11 @@ private slots:
         QCOMPARE(w->backend->fileName(), QString("1-harbour.png"));
         QVERIFY(!view->property("paused").toBool());
 
+        // What comes of something asked for shows a moment in the middle.
+        QTest::keyClick(w->window, Qt::Key_C, Qt::ControlModifier);
+        QTRY_COMPARE(findItem(w->window->contentItem(), "levelMessage")->property("text").toString(),
+                     QString("Copied the picture"));
+
         // Ctrl+M: every file in the folder, the one shown picked; the arrows
         // move, Ctrl++ makes the tiles bigger, and Enter opens one.
         QTest::keyClick(w->window, Qt::Key_M, Qt::ControlModifier);

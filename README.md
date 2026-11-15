@@ -12,7 +12,7 @@ Videos and songs get a timeline with preview frames and chapter ticks, subtitles
 
 ![A film with its controls and subtitles](screenshots/overlay.jpg)
 
-With the controls put away, only the picture is left, and a corner says where you are for a moment whenever something changes.
+With the controls put away, only the picture is left, and a corner says where you are for a moment whenever something changes. The volume, the speed, and what came of a copy, a save or a print show a moment in the middle.
 
 ![The same film, bare](screenshots/bare.jpg)
 
@@ -26,7 +26,7 @@ Videos play through ffmpeg: Qt Multimedia's FFmpeg backend decodes, on the GPU w
 
 ## Command line
 
-`omaview photo.jpg` (or `omaview open photo.jpg`) opens a file with the others in its folder to step through. A photo's folder brings its pictures and videos, a song's its songs and videos, and a video's everything, but songs and pictures never mix: an album doesn't show its cover as a track. Several files given at once are the playlist, in that order. A folder (`omaview ~/Pictures`) opens as the grid of its pictures and videos, or of its songs and videos when it has no pictures.
+`omaview photo.jpg` (or `omaview open photo.jpg`) opens a file with the others in its folder to step through. A photo's folder brings its pictures and videos, a song's its songs and videos, and a video's everything, but songs and pictures never mix: an album doesn't show its cover as a track. Several files given at once are the playlist, in that order. A folder (`omaview ~/Pictures`) opens as the grid of its pictures and videos, or of its songs and videos when it holds more songs than pictures, as an album with its cover does.
 
 These need no display, take `--json`, and exit 0 or 1 with the reason on stderr:
 
