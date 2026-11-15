@@ -4,9 +4,11 @@ Omarchy's picture viewer and media player, listed in the launcher as Media Viewe
 
 ![Omaview showing a photo, with the controls brought in by Tab](screenshots/picture.jpg)
 
+![The info card: what the camera wrote](screenshots/picture-info.jpg)
+
 ![Omaview playing a film, bare](screenshots/bare.jpg)
 
-![Omaview with the controls brought in by Tab](screenshots/overlay.jpg)
+![A film with the controls brought in by Tab](screenshots/overlay.jpg)
 
 Pictures are decoded by Qt's image plugins, off the main thread: JPEG, PNG, WebP, GIF and animated WebP, TIFF, BMP and SVG, and HEIC, AVIF and JPEG XL when `kimageformats` is installed. They're turned upright by their EXIF orientation, and the info card shows what the camera wrote. Opening a picture never starts the video engine, so it's up at once.
 

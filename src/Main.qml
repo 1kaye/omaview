@@ -749,6 +749,8 @@ ApplicationWindow {
         height: Math.min(win.height - 40, infoColumn.implicitHeight + 40)
         modal: true
         focus: true
+        // Darkened behind, as a player's picture should be, not washed out.
+        Overlay.modal: Rectangle { color: Qt.rgba(0, 0, 0, 0.55) }
         padding: 20
         // A modal popup holds the window's keys, so its own keys close it and
         // quit while it is open.
@@ -828,6 +830,8 @@ ApplicationWindow {
         height: Math.min(win.height - 40, helpGrid.implicitHeight + 48)
         modal: true
         focus: true
+        // Darkened behind, as a player's picture should be, not washed out.
+        Overlay.modal: Rectangle { color: Qt.rgba(0, 0, 0, 0.55) }
         padding: 24
         Shortcut { sequences: ["?", "F1"]; enabled: help.opened; onActivated: help.close() }
         Shortcut { sequences: ["Q", "Ctrl+Q"]; enabled: help.opened; onActivated: win.close() }
