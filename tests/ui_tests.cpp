@@ -20,6 +20,7 @@
 #include "filepicker.h"
 #include "inhibit.h"
 #include "theme.h"
+#include "fixtures.h"
 #include "thumbnails.h"
 #include "translator.h"
 
@@ -130,15 +131,22 @@ class UiTests : public QObject {
         QDir().mkpath(directory);
         const QColor background = w->window->color();
         auto *backgroundItem = w->window->property("background").value<QQuickItem *>();
+        auto *video = w->window->findChild<QQuickItem *>("video");
+        // The software renderer draws the VideoOutput as a white box, so it
+        // is left out of the grab and its frame painted beneath instead.
+        const bool videoShown = video && video->isVisible();
+        if (videoShown)
+            video->setVisible(false);
         w->window->setColor(Qt::transparent);
         backgroundItem->setVisible(false);
         QImage ui = w->window->grabWindow();
         backgroundItem->setVisible(true);
+        if (videoShown)
+            video->setVisible(true);
         w->window->setColor(background);
         QImage image(ui.size(), QImage::Format_ARGB32_Premultiplied);
         image.fill(background);
         QPainter painter(&image);
-        auto *video = w->window->findChild<QQuickItem *>("video");
         QImage frame = w->backend->currentFrame().isValid() ? QVideoFrame(w->backend->currentFrame()).toImage() : QImage();
         if (video && !frame.isNull() && w->backend->hasVideo()) {
             const QRectF picture = video->property("contentRect").toRectF();
@@ -594,6 +602,113 @@ private slots:
         QTRY_VERIFY(find<QQuickItem>(w.get(), "error")->isVisible());
         QVERIFY(!w->backend->playerReady());
         QVERIFY2(w->warnings.isEmpty(), qPrintable(w->warnings.join('\n')));
+        close(w);
+    }
+
+    // With OMAVIEW_README_SHOTS set to a directory, shoots the README's
+    // pictures in the real window: a made-up fjord, at a time of day each,
+    // with a camera's EXIF, and two films made from it. Run it with
+    // QT_SCALE_FACTOR=2 for shots at twice the size.
+    void readmeScreenshots() {
+        const QString out = qEnvironmentVariable("OMAVIEW_README_SHOTS");
+        if (out.isEmpty())
+            QSKIP("Set OMAVIEW_README_SHOTS to a directory to shoot the README's pictures");
+        qputenv("OMAVIEW_SHOTS", out.toUtf8());
+        using namespace fixtures;
+        const QString folder = m_dir.filePath("Fjord");
+        QVERIFY(QDir().mkpath(folder));
+        const QList<int> times{0, 3, 2, 1, 4, 5, 0};
+        for (int i = 0; i < times.size(); ++i) {
+            const QByteArray taken = QByteArray("2026:09:21 ") + QByteArray::number(19 + i % 3) + ":42:0" + QByteArray::number(i);
+            QVERIFY(write(folder + QString("/IMG_%1.jpg").arg(2041 + i),
+                          jpegWithExif(fjord(QSize(3000, 2000), times[i], i * 0.37 - (i > 5 ? 0.6 : 0)),
+                                       {ascii(0x010F, "FUJIFILM"), ascii(0x0110, "X-T5"), shortTag(0x0112, 1)},
+                                       {rational(0x829A, 1, 125), rational(0x829D, 56, 10), shortTag(0x8827, 320),
+                                        ascii(0x9003, taken), rational(0x920A, 23, 1), shortTag(0xA405, 35),
+                                        ascii(0xA434, "XF23mmF1.4 R LM WR")})));
+        }
+        // A film drifting slowly in over the water, with a line said over it.
+        auto film = [&](const QString &name, int time, const QByteArray &title) {
+            fjord(QSize(3840, 2160), time, 0.2).save(m_dir.filePath("still.png"));
+            write(m_dir.filePath("film.srt"), "1\n00:00:00,500 --> 00:00:11,500\nThe ferry only runs\nwhile the light holds.\n");
+            write(m_dir.filePath("film.txt"), ";FFMETADATA1\ntitle=" + title + "\n[CHAPTER]\nTIMEBASE=1/1000\nSTART=0\nEND=6000\n"
+                                              "title=The landing\n[CHAPTER]\nTIMEBASE=1/1000\nSTART=6000\nEND=12000\ntitle=Out on the water\n");
+            QProcess ffmpeg;
+            ffmpeg.setWorkingDirectory(m_dir.path());
+            ffmpeg.start("ffmpeg", {"-v", "error", "-y", "-loop", "1", "-i", "still.png", "-f", "lavfi", "-i",
+                                    "sine=frequency=220:duration=12", "-i", "film.srt", "-i", "film.txt", "-filter_complex",
+                                    "[0:v]zoompan=z='1+0.0004*on':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=300:s=1920x1080:fps=25[v]",
+                                    "-map", "[v]", "-map", "1:a", "-map", "2:s", "-map_metadata", "3", "-map_chapters", "3",
+                                    "-t", "12", "-c:v", "libx264", "-preset", "veryfast", "-g", "25", "-pix_fmt", "yuv420p",
+                                    "-c:a", "aac", "-c:s", "srt", "-metadata:s:a:0", "language=eng",
+                                    "-metadata:s:s:0", "language=eng", folder + "/" + name});
+            return ffmpeg.waitForFinished(120000) && ffmpeg.exitCode() == 0;
+        };
+        QVERIFY(film("Crossing the fjord.mkv", 1, "Crossing the Fjord"));
+        QVERIFY(film("Evening ferry.mkv", 0, "Evening Ferry"));
+
+        auto w = open(m_dir.filePath("readme"));
+        QVERIFY(w->window);
+        w->window->resize(1440, 960);
+        QVERIFY(QTest::qWaitForWindowExposed(w->window));
+        w->window->requestActivate();
+        QVERIFY(QTest::qWaitForWindowActive(w->window));
+
+        // A photo with its controls, and its card.
+        w->backend->open({folder + "/IMG_2041.jpg"});
+        auto *view = find<QQuickItem>(w.get(), "pictureView");
+        QTRY_VERIFY_WITH_TIMEOUT(view->property("ready").toBool(), 10000);
+        QTRY_COMPARE(w->backend->playlistCount(), 9);
+        QTest::qWait(400);
+        shot(w.get(), "picture");
+        QTest::keyClick(w->window, Qt::Key_I);
+        QTRY_VERIFY(find<QObject>(w.get(), "info")->property("opened").toBool());
+        QTest::qWait(400);
+        shot(w.get(), "picture-info");
+        QTest::keyClick(w->window, Qt::Key_I);
+        QTRY_VERIFY(!find<QObject>(w.get(), "info")->property("visible").toBool());
+
+        // The folder as a grid, the first film picked and flipping through.
+        QTest::keyClick(w->window, Qt::Key_M, Qt::ControlModifier);
+        QTRY_VERIFY(w->window->property("gridShown").toBool());
+        for (int i = 0; i < 3; ++i)
+            QTest::keyClick(w->window, Qt::Key_Equal, Qt::ControlModifier);
+        QTest::keyClick(w->window, Qt::Key_Home);
+        QTRY_VERIFY_WITH_TIMEOUT(findItem(w->window->contentItem(), "gridPreview"), 10000);
+        auto *preview = findItem(w->window->contentItem(), "gridPreview");
+        QTRY_VERIFY_WITH_TIMEOUT(preview->property("frame").toInt() >= 4, 20000);
+        QTest::qWait(1500);
+        shot(w.get(), "grid");
+        QTest::keyClick(w->window, Qt::Key_Escape);
+        QTRY_VERIFY(!w->window->property("gridShown").toBool());
+
+        close(w);
+
+        // A film with its controls, its line on, and then bare, in a window
+        // of its own: one resized after it shows loses its alpha, which the
+        // shots need to paint the frame beneath.
+        w = open(m_dir.filePath("readme-film"));
+        QVERIFY(w->window);
+        w->window->resize(1440, 810);
+        QVERIFY(QTest::qWaitForWindowExposed(w->window));
+        w->window->requestActivate();
+        QVERIFY(QTest::qWaitForWindowActive(w->window));
+        w->backend->open({folder + "/Crossing the fjord.mkv"});
+        QTRY_VERIFY_WITH_TIMEOUT(w->backend->playing(), 10000);
+        QTRY_VERIFY_WITH_TIMEOUT(w->backend->previewCount() > 0, 30000);
+        QTest::keyClick(w->window, Qt::Key_C);
+        w->backend->seek(4200);
+        QTRY_VERIFY_WITH_TIMEOUT(!find<QQuickItem>(w.get(), "subtitle")->property("text").toString().isEmpty(), 8000);
+        w->backend->pause();
+        QTRY_VERIFY_WITH_TIMEOUT(w->backend->currentFrame().isValid(), 5000);
+        QTest::qWait(500);
+        shot(w.get(), "overlay");
+        QTest::keyClick(w->window, Qt::Key_Tab);
+        w->backend->play();
+        QTest::qWait(2600);
+        w->backend->pause();
+        QTest::qWait(300);
+        shot(w.get(), "bare");
         close(w);
     }
 

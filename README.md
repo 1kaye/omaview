@@ -1,14 +1,24 @@
 # Omaview
 
-Omarchy's picture viewer and media player, listed in the launcher as Media Viewer. Open a photo, a video or a song and look at it, with its controls along the bottom and its title across the top; Tab puts them away for nothing on screen but the picture. Step through a folder of photos with the arrows, zoom with the wheel, and watch the clip between them in the same window. A corner shows the file, where it is in the folder or the time, for a moment whenever something changes; volume and speed flash their level in the middle.
+Omarchy's picture viewer and media player, listed in the launcher as Media Viewer. Open a photo, a video or a song, or a whole folder, and look at it: the controls along the bottom and the title across the top, or nothing but the picture once Tab puts them away. Step through a folder with the arrows, zoom with the wheel, and watch the clips between the photos in the same window.
 
-![Omaview showing a photo, with the controls brought in by Tab](screenshots/picture.jpg)
+![A photo, with its controls](screenshots/picture.jpg)
+
+Ctrl+M, or opening a folder, shows everything in it as a grid. Pictures fill in as they decode, and the video under the pointer flips through frames from across the whole of it, silently, so you can tell one clip from the next before opening any.
+
+![The folder as a grid, a film previewing in its tile](screenshots/grid.jpg)
+
+Videos and songs get a timeline with preview frames and chapter ticks, subtitles and audio tracks by language, speed, loop (R), and a volume that goes on to 150% for quiet recordings. Where you stopped in anything long is remembered.
+
+![A film with its controls and subtitles](screenshots/overlay.jpg)
+
+With the controls put away, only the picture is left, and a corner says where you are for a moment whenever something changes.
+
+![The same film, bare](screenshots/bare.jpg)
+
+I shows what's in the file: the streams and chapters of a video, or what the camera wrote for a photo.
 
 ![The info card: what the camera wrote](screenshots/picture-info.jpg)
-
-![Omaview playing a film, bare](screenshots/bare.jpg)
-
-![A film with the controls brought in by Tab](screenshots/overlay.jpg)
 
 Pictures are decoded by Qt's image plugins, off the main thread: JPEG, PNG, WebP, GIF and animated WebP, TIFF, BMP and SVG, and HEIC, AVIF and JPEG XL when `kimageformats` is installed. They're turned upright by their EXIF orientation, and the info card shows what the camera wrote. Opening a picture never starts the video engine, so it's up at once.
 
@@ -96,13 +106,14 @@ Omaview speaks the language picked under Omarchy's Setup > Language, follows the
 - `cups` for printing (`lp`), optional
 - `ffmpeg`, for `ffprobe` and `ffmpeg`
 - `wl-clipboard`, so a copied frame outlives Omaview
+- PipeWire with WirePlumber (`pw-dump`, `wpctl`) for volume above 100%, optional
 - `xdg-desktop-portal` and a backend, for the open and save dialogs
 - To build: `cmake`, `wayland-protocols`
 
 ## Development
 
-`bin/build` builds into `build/`, and `bin/test` builds and runs every test offscreen: the backend against clips and pictures made at test time, the real window driven by keys, and the command line as an agent uses it. `cmake --install build --prefix ~/.local` puts Omaview in the launcher before it is packaged.
+`bin/build` builds into `build/`, and `bin/test` builds and runs every test offscreen: the backend against clips and pictures made at test time, the real window driven by keys, and the command line as an agent uses it. `cmake --install build --prefix ~/.local` puts Omaview in the launcher before it is packaged. `QT_QPA_PLATFORM=offscreen QT_SCALE_FACTOR=2 OMAVIEW_README_SHOTS=<dir> build/ui_tests readmeScreenshots` shoots the screenshots above, of a made-up fjord, in the real window.
 
 ## License
 
-MIT. The theme, translator and portal file picker come from Omarchy's other apps (MIT, David Heinemeier Hansson).
+MIT.
