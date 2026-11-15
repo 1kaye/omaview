@@ -97,7 +97,6 @@
   "Taken": "撮影日時",
   "The XDG desktop portal file chooser is not available.": "XDG デスクトップポータルのファイル選択ダイアログを利用できません。",
   "The portal file picker failed: %1": "ポータルのファイル選択ダイアログでエラーが発生しました: %1",
-  "The stream could not be reached.": "ストリームに接続できませんでした。",
   "There is no frame at that time.": "その時刻にはフレームがありません。",
   "This file could not be played.": "このファイルを再生できませんでした。",
   "This picture could not be shown.": "この画像を表示できませんでした。",

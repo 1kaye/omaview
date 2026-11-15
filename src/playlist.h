@@ -9,9 +9,6 @@ namespace playlist {
 enum class Kind { None, Picture, Video, Audio };
 Kind kind(const QString &path);
 
-// Whether a file looks like something Omaview shows or plays.
-bool playable(const QString &path);
-bool audioOnly(const QString &path);
 bool picture(const QString &path);
 
 // The files in a file's folder that belong with it, the file among them, in
@@ -23,8 +20,5 @@ QStringList siblings(const QString &path);
 // more pictures than songs, as a camera's does, and otherwise its songs and
 // videos, so an album's cover isn't one of its tracks.
 QStringList folder(const QString &directory);
-
-// Natural, case-insensitive order.
-void sort(QStringList &paths);
 
 }  // namespace playlist

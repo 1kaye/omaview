@@ -14,7 +14,6 @@ struct Stream {
     int index = -1;       // ffprobe's index across all streams
     QString type;         // "video", "audio", "subtitle"
     QString codec;        // codec_name, e.g. "h264", "subrip", "hdmv_pgs_subtitle"
-    QString codecLong;    // codec_long_name
     QString language;     // ISO 639-2 from the tags, e.g. "eng"
     QString title;
     int width = 0;

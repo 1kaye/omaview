@@ -59,8 +59,10 @@ Item {
         id: preview
         readonly property bool pointing: timeline.hoverFraction >= 0 || timeline.dragFraction >= 0
         visible: timeline.usable && timeline.expanded && pointing
+        // Where the pointer is, or nothing: it never follows the playhead, so
+        // a hidden preview costs nothing as the video plays.
         readonly property real at: timeline.dragFraction >= 0 ? timeline.dragFraction
-                                   : timeline.hoverFraction >= 0 ? timeline.hoverFraction : timeline.fraction
+                                   : timeline.hoverFraction >= 0 ? timeline.hoverFraction : 0
         readonly property int tile: backend.previewCount > 0
                                     ? Math.min(backend.previewCount - 1, Math.floor(at * backend.duration / 1000 / backend.previewInterval))
                                     : -1

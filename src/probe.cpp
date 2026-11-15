@@ -2,7 +2,6 @@
 
 #include <QCoreApplication>
 #include <QElapsedTimer>
-#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QLocale>
@@ -83,7 +82,6 @@ Info parse(const QByteArray &json, const QString &path) {
         stream.index = object.value("index").toInt(-1);
         stream.type = object.value("codec_type").toString();
         stream.codec = object.value("codec_name").toString();
-        stream.codecLong = object.value("codec_long_name").toString();
         stream.language = tag(object, "language");
         if (stream.language == "und")
             stream.language.clear();

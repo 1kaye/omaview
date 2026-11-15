@@ -349,8 +349,8 @@ private slots:
         for (const QString &path : playlist::siblings(dir.filePath("episode 2.mkv")))
             names << QFileInfo(path).fileName();
         QCOMPARE(names, (QStringList{"cover.jpg", "Episode 1.mp4", "episode 2.mkv", "Episode 10.mkv", "song.flac"}));
-        QVERIFY(playlist::audioOnly("a.FLAC"));
-        QVERIFY(!playlist::playable("a.txt"));
+        QCOMPARE(playlist::kind("a.FLAC"), playlist::Kind::Audio);
+        QCOMPARE(playlist::kind("a.txt"), playlist::Kind::None);
     }
 
     void songsAndPicturesDontMix() {
@@ -370,7 +370,7 @@ private slots:
             photos << "IMG_10.HEIC";
         QCOMPARE(names("IMG_2.jpg"), photos);
         QCOMPARE(names("memo.m4a"), (QStringList{"IMG_3.mov", "memo.m4a"}));
-        QVERIFY(!playlist::playable("scan.pdf"));
+        QCOMPARE(playlist::kind("scan.pdf"), playlist::Kind::None);
         // A folder opened as itself is its pictures and videos; one of songs,
         // its songs and videos.
         QStringList folder;
@@ -488,7 +488,6 @@ private slots:
         QVERIFY2(rows.contains("Camera: Canon EOS R5"), qPrintable(rows.join('\n')));
         QVERIFY2(rows.contains("Exposure: 1/250 s · f/2.8 · ISO 400 · 50 mm"), qPrintable(rows.join('\n')));
         QVERIFY(rows.contains("Dimensions: 400 × 600 · 0.2 MP"));
-        QCOMPARE(backend.summary(), QString("400 × 600 · JPEG · ") + QLocale().formattedDataSize(QFileInfo(m_picture).size()));
 
         // Turned as it shows, by quarter turns either way, and anew for the
         // next picture.

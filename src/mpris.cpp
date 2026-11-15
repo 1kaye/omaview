@@ -2,9 +2,7 @@
 
 #include <QCoreApplication>
 #include <QDBusConnection>
-#include <QDBusConnectionInterface>
 #include <QDBusMessage>
-#include <QFileInfo>
 
 #include "backend.h"
 
