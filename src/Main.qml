@@ -191,6 +191,9 @@ ApplicationWindow {
         }
         function onMediaChanged() {
             win.opening = false
+            // A file opened from elsewhere, Ctrl+O or a drop, shows rather than
+            // playing behind the grid; a folder opens its grid again after.
+            win.gridShown = false
             // Every picture opens fitted and moving.
             pictureView.reset()
             pictureView.paused = false
