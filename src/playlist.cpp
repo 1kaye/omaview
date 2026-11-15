@@ -3,7 +3,9 @@
 #include <QCollator>
 #include <QDir>
 #include <QFileInfo>
+#include <QImageReader>
 #include <QSet>
+#include <QUrl>
 #include <algorithm>
 
 namespace playlist {
@@ -22,16 +24,47 @@ const QSet<QString> &audioExtensions() {
     return set;
 }
 
+// Whatever Qt's image plugins read here, so installing kimageformats brings
+// HEIC, AVIF and JPEG XL without a change to Omaview. PDF is a document, not a
+// picture, though Qt's PDF module offers it as an image format.
+const QSet<QString> &pictureExtensions() {
+    static const QSet<QString> set = [] {
+        QSet<QString> found{"jpg", "jpeg", "png", "gif", "webp", "bmp", "svg"};
+        for (const QByteArray &format : QImageReader::supportedImageFormats())
+            found << QString::fromLatin1(format).toLower();
+        found.remove("pdf");
+        for (const QString &suffix : videoExtensions())
+            found.remove(suffix);
+        for (const QString &suffix : audioExtensions())
+            found.remove(suffix);
+        return found;
+    }();
+    return set;
+}
+
+QString suffixOf(const QString &path) {
+    // A URL's own path, so https://…/photo.jpg?w=800 is a picture.
+    const QUrl url(path);
+    const QString name = url.scheme().size() > 1 ? url.path() : path;
+    return QFileInfo(name).suffix().toLower();
+}
+
 }  // namespace
 
-bool playable(const QString &path) {
-    const QString suffix = QFileInfo(path).suffix().toLower();
-    return videoExtensions().contains(suffix) || audioExtensions().contains(suffix);
+Kind kind(const QString &path) {
+    const QString suffix = suffixOf(path);
+    if (videoExtensions().contains(suffix))
+        return Kind::Video;
+    if (audioExtensions().contains(suffix))
+        return Kind::Audio;
+    if (pictureExtensions().contains(suffix))
+        return Kind::Picture;
+    return Kind::None;
 }
 
-bool audioOnly(const QString &path) {
-    return audioExtensions().contains(QFileInfo(path).suffix().toLower());
-}
+bool playable(const QString &path) { return kind(path) != Kind::None; }
+bool audioOnly(const QString &path) { return kind(path) == Kind::Audio; }
+bool picture(const QString &path) { return kind(path) == Kind::Picture; }
 
 void sort(QStringList &paths) {
     QCollator collator;
@@ -45,10 +78,16 @@ void sort(QStringList &paths) {
 
 QStringList siblings(const QString &path) {
     const QFileInfo file(path);
+    const Kind own = kind(path);
     QStringList found;
-    for (const QFileInfo &entry : file.dir().entryInfoList(QDir::Files | QDir::Readable))
-        if (playable(entry.fileName()))
-            found << entry.absoluteFilePath();
+    for (const QFileInfo &entry : file.dir().entryInfoList(QDir::Files | QDir::Readable)) {
+        const Kind other = kind(entry.fileName());
+        if (other == Kind::None)
+            continue;
+        if ((own == Kind::Picture && other == Kind::Audio) || (own == Kind::Audio && other == Kind::Picture))
+            continue;
+        found << entry.absoluteFilePath();
+    }
     const QString self = file.absoluteFilePath();
     if (!found.contains(self))
         found << self;

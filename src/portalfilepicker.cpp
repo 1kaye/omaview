@@ -70,11 +70,12 @@ void registerPortalFilterTypes() {
 }
 
 PortalFileFilter mediaFilter() {
-    PortalFilterRules rules{{1, QStringLiteral("video/*")}, {1, QStringLiteral("audio/*")}};
-    for (const char *extension : {"mkv", "mp4", "m4v", "mov", "webm", "avi", "mpg", "mpeg", "ts", "m2ts",
-                                  "ogv", "mp3", "flac", "ogg", "opus", "m4a", "wav"})
+    PortalFilterRules rules{{1, QStringLiteral("image/*")}, {1, QStringLiteral("video/*")},
+                            {1, QStringLiteral("audio/*")}};
+    for (const char *extension : {"jpg", "jpeg", "png", "webp", "gif", "mkv", "mp4", "m4v", "mov", "webm", "avi",
+                                  "mpg", "mpeg", "ts", "m2ts", "ogv", "mp3", "flac", "ogg", "opus", "m4a", "wav"})
         rules.append({0, QStringLiteral("*.") + QLatin1String(extension)});
-    return {Texts::tr("Videos and music"), rules};
+    return {Texts::tr("Pictures, videos and music"), rules};
 }
 
 PortalFileFilters mediaFilters() {
@@ -98,9 +99,15 @@ QByteArray portalPathBytes(const QString &path) {
     return bytes;
 }
 
+// Omarchy's file manager and screenshots both start in Pictures, so the
+// dialog does too, then Videos, then home.
 QString openFolder() {
-    const QString videos = QStandardPaths::writableLocation(QStandardPaths::MoviesLocation);
-    return QDir(videos).exists() ? videos : QDir::homePath();
+    for (const auto location : {QStandardPaths::PicturesLocation, QStandardPaths::MoviesLocation}) {
+        const QString folder = QStandardPaths::writableLocation(location);
+        if (QDir(folder).exists())
+            return folder;
+    }
+    return QDir::homePath();
 }
 }
 
@@ -117,7 +124,7 @@ void PortalFilePicker::openMedia() {
     options.insert(QStringLiteral("filters"), QVariant::fromValue(mediaFilters()));
     options.insert(QStringLiteral("current_filter"), QVariant::fromValue(mediaFilter()));
 
-    requestFile(QStringLiteral("OpenFile"), tr("Open Videos or Music"), options, Action::Open);
+    requestFile(QStringLiteral("OpenFile"), tr("Open"), options, Action::Open);
 }
 
 void PortalFilePicker::saveImage(const QUrl &suggestedUrl) {

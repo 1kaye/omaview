@@ -1,24 +1,46 @@
 # Omaview
 
-Omarchy's media player, listed in the launcher as Video Player. Open a video or a song and watch it, with nothing on screen but the picture and a thin line that says how far along you are. Every key answers with a short on-screen display, and Tab brings in the controls when you want them.
+Omarchy's picture viewer and media player, listed in the launcher as Media Viewer. Open a photo, a video or a song and look at it, with nothing on screen but the picture. Step through a folder of photos with the arrows, zoom with the wheel, and watch the clip between them in the same window. Every key answers with a short on-screen display, and Tab brings in the controls when you want them.
+
+![Omaview showing a photo, with the controls brought in by Tab](screenshots/picture.jpg)
 
 ![Omaview playing a film, bare](screenshots/bare.jpg)
 
 ![Omaview with the controls brought in by Tab](screenshots/overlay.jpg)
 
-Omaview plays through ffmpeg: Qt Multimedia's FFmpeg backend decodes, on the GPU where it can, and the `ffmpeg` and `ffprobe` tools read chapters and track details, make the scrub previews, read subtitles, and grab exact frames.
+Pictures are decoded by Qt's image plugins, off the main thread: JPEG, PNG, WebP, GIF and animated WebP, TIFF, BMP and SVG, and HEIC, AVIF and JPEG XL when `kimageformats` is installed. They're turned upright by their EXIF orientation, and the info card shows what the camera wrote. Opening a picture never starts the video engine, so it's up at once.
+
+Videos play through ffmpeg: Qt Multimedia's FFmpeg backend decodes, on the GPU where it can, and the `ffmpeg` and `ffprobe` tools read chapters and track details, make the scrub previews, read subtitles, and grab exact frames.
 
 ## Command line
 
-`omaview movie.mkv` (or `omaview open movie.mkv`) plays a file, with the other videos and songs in its folder as the playlist. Several files given at once are the playlist, in that order. A URL plays what ffmpeg can open.
+`omaview photo.jpg` (or `omaview open photo.jpg`) opens a file with the others in its folder to step through. A photo's folder brings its pictures and videos, a song's its songs and videos, and a video's everything, but songs and pictures never mix: an album doesn't show its cover as a track. Several files given at once are the playlist, in that order. A URL plays what ffmpeg can open, or shows a picture.
 
 These need no display, take `--json`, and exit 0 or 1 with the reason on stderr:
 
-- `omaview info <file>` — duration, streams, chapters, and where Omaview would resume.
+- `omaview info <file>` — a video's duration, streams, chapters and where Omaview would resume, or a picture's size, format and camera details.
 - `omaview frame <file> --at 1:02:03 -o still.png` — the exact frame at a time.
 - `omaview skill install` — installs a short skill for coding agents.
 
 ## Shortcuts
+
+The keys mean what fits what's shown: the arrows step through pictures and seek in a video.
+
+### Pictures
+
+| Key | Action |
+|---|---|
+| `←` `→` `PgUp` `PgDn` | Previous or next file |
+| `Home` `End` | First or last file |
+| `+` `−` / wheel / pinch | Zoom in or out, about the pointer |
+| `0` / `1` | Fit to the window / actual size |
+| `←` `→` `↑` `↓` / drag | Move around, zoomed in |
+| `R` `Shift+R` | Turn right or left (the file isn't changed) |
+| `Space` | Pause or play an animation |
+| `Ctrl+P` | Print, to the default printer |
+| `E` | Edit in Omasnap |
+
+### Videos and music
 
 | Key | Action |
 |---|---|
@@ -30,18 +52,25 @@ These need no display, take `--json`, and exit 0 or 1 with the reason on stderr:
 | `[` `]` / `Backspace` | Slower or faster / normal speed |
 | `↑` `↓` / `M` | Louder or quieter / mute |
 | `C` / `A` | Next subtitles, or off / next audio track |
+| `Enter` | At the end of a file, play the next one |
+| `Ctrl+S` | Save the frame as a PNG |
+| `E` | Trim in Omacut |
+
+Click the picture to play or pause, double-click it for fullscreen, and scroll for volume. The bottom edge grows into a timeline with preview frames when the pointer comes near it.
+
+### Any file
+
+| Key | Action |
+|---|---|
+| `N` `P` | Next or previous file |
 | `Tab` | Show or hide the controls |
 | `F` / `Esc` | Fullscreen / leave fullscreen or hide the controls |
-| `N` `P` | Next or previous file |
-| `Enter` | At the end of a file, play the next one |
-| `I` | What's in the file: streams, codecs, chapters |
-| `Ctrl+Shift+C` / `Ctrl+S` | Copy the frame / save it as a PNG |
-| `E` | Trim in Omacut |
+| `I` | What's in the file: streams and chapters, or the camera's details |
+| `Ctrl+C` | Copy the picture as it shows, or the video's frame |
+| `Delete` / `Ctrl+Z` | Move to the Trash and show the next / bring it back |
 | `Ctrl+O` | Open files |
 | `?` | Every shortcut |
 | `Q` | Quit |
-
-Click the picture to play or pause, double-click it for fullscreen, and scroll for volume. The bottom edge grows into a timeline with preview frames when the pointer comes near it.
 
 ## What it remembers
 
@@ -49,13 +78,17 @@ Where you stopped in anything longer than five minutes, so it resumes there (Hom
 
 Subtitles start off unless the film speaks a language other than yours and has subtitles in yours. Files beside the video named after it (`movie.srt`, `movie.en.srt`, `.vtt`, `.ass`) are offered too. Bitmap subtitle tracks (PGS, VobSub) aren't shown, and the info card says so.
 
-While a video plays, Omaview keeps the screen from going to sleep. Media keys, `playerctl` and the bar's now-playing reach it through MPRIS.
+While a video plays, Omaview keeps the screen from going to sleep. Once a video or song has played, media keys, `playerctl` and the bar's now-playing reach it through MPRIS; a window showing only pictures stays out of their way.
+
+A picture edited in another app while it's shown, in Omasnap say, is shown again as it was saved.
 
 Omaview speaks the language picked under Omarchy's Setup > Language, follows the theme, and mirrors for right-to-left languages.
 
 ## Requirements
 
 - Qt 6 with Multimedia: `qt6-base`, `qt6-declarative`, `qt6-multimedia` and `qt6-multimedia-ffmpeg`, `qt6-svg`, `qt6-wayland`
+- `qt6-imageformats` for WebP and TIFF, and `kimageformats` for HEIC, AVIF and JPEG XL
+- `cups` for printing (`lp`), optional
 - `ffmpeg`, for `ffprobe` and `ffmpeg`
 - `wl-clipboard`, so a copied frame outlives Omaview
 - `xdg-desktop-portal` and a backend, for the open and save dialogs
@@ -63,7 +96,7 @@ Omaview speaks the language picked under Omarchy's Setup > Language, follows the
 
 ## Development
 
-`bin/build` builds into `build/`, and `bin/test` builds and runs every test offscreen: the backend against clips ffmpeg makes at test time, the real window driven by keys, and the command line as an agent uses it. `cmake --install build --prefix ~/.local` puts Omaview in the launcher before it is packaged.
+`bin/build` builds into `build/`, and `bin/test` builds and runs every test offscreen: the backend against clips and pictures made at test time, the real window driven by keys, and the command line as an agent uses it. `cmake --install build --prefix ~/.local` puts Omaview in the launcher before it is packaged.
 
 ## License
 

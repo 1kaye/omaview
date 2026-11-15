@@ -1,0 +1,227 @@
+#include "exif.h"
+
+#include <QFile>
+#include <QHash>
+
+namespace exif {
+
+namespace {
+
+// Every read is checked against the end, since the offsets come from the file.
+class Reader {
+public:
+    explicit Reader(const QByteArray &data) : m_data(data) {
+        m_little = data.startsWith("II");
+    }
+    bool valid() const {
+        return m_data.size() >= 8 && (m_data.startsWith("II") || m_data.startsWith("MM")) && u16(2) == 42;
+    }
+    quint32 size() const { return quint32(m_data.size()); }
+    bool fits(quint32 offset, quint32 length) const {
+        return offset <= size() && length <= size() - offset;
+    }
+    quint16 u16(quint32 offset) const {
+        if (!fits(offset, 2))
+            return 0;
+        const auto *p = reinterpret_cast<const uchar *>(m_data.constData() + offset);
+        return m_little ? quint16(p[0] | p[1] << 8) : quint16(p[0] << 8 | p[1]);
+    }
+    quint32 u32(quint32 offset) const {
+        if (!fits(offset, 4))
+            return 0;
+        const auto *p = reinterpret_cast<const uchar *>(m_data.constData() + offset);
+        return m_little ? quint32(p[0]) | quint32(p[1]) << 8 | quint32(p[2]) << 16 | quint32(p[3]) << 24
+                        : quint32(p[0]) << 24 | quint32(p[1]) << 16 | quint32(p[2]) << 8 | quint32(p[3]);
+    }
+    QByteArray bytes(quint32 offset, quint32 length) const {
+        return fits(offset, length) ? m_data.mid(offset, length) : QByteArray();
+    }
+
+private:
+    const QByteArray &m_data;
+    bool m_little = true;
+};
+
+struct Entry {
+    quint16 type = 0;
+    quint32 count = 0;
+    quint32 value = 0;  // where the value is: inline in the entry, or the offset it holds
+};
+
+int typeSize(quint16 type) {
+    switch (type) {
+    case 1: case 2: case 6: case 7: return 1;  // BYTE, ASCII, SBYTE, UNDEFINED
+    case 3: case 8: return 2;                  // SHORT, SSHORT
+    case 4: case 9: case 11: return 4;         // LONG, SLONG, FLOAT
+    case 5: case 10: case 12: return 8;        // RATIONAL, SRATIONAL, DOUBLE
+    }
+    return 0;
+}
+
+// One IFD's entries by tag; the next IFD is not followed, since the tags
+// wanted are all in the first image's and its EXIF one.
+QHash<quint16, Entry> entries(const Reader &reader, quint32 offset) {
+    QHash<quint16, Entry> found;
+    const quint16 count = reader.u16(offset);
+    if (!reader.fits(offset + 2, quint32(count) * 12))
+        return found;
+    for (quint16 i = 0; i < count; ++i) {
+        const quint32 at = offset + 2 + quint32(i) * 12;
+        Entry entry;
+        entry.type = reader.u16(at + 2);
+        entry.count = reader.u32(at + 4);
+        const quint64 length = quint64(typeSize(entry.type)) * entry.count;
+        entry.value = length <= 4 ? at + 8 : reader.u32(at + 8);
+        if (length > 0 && length < 1 << 20 && reader.fits(entry.value, quint32(length)))
+            found.insert(reader.u16(at), entry);
+    }
+    return found;
+}
+
+QString text(const Reader &reader, const QHash<quint16, Entry> &ifd, quint16 tag) {
+    const Entry entry = ifd.value(tag);
+    if (entry.type != 2)
+        return {};
+    QByteArray bytes = reader.bytes(entry.value, entry.count);
+    const int end = bytes.indexOf('\0');
+    if (end >= 0)
+        bytes.truncate(end);
+    return QString::fromUtf8(bytes).trimmed();
+}
+
+double number(const Reader &reader, const QHash<quint16, Entry> &ifd, quint16 tag) {
+    if (!ifd.contains(tag))
+        return 0;
+    const Entry entry = ifd.value(tag);
+    switch (entry.type) {
+    case 3: return reader.u16(entry.value);
+    case 4: return reader.u32(entry.value);
+    case 5: {
+        const quint32 denominator = reader.u32(entry.value + 4);
+        return denominator ? double(reader.u32(entry.value)) / denominator : 0;
+    }
+    case 10: {
+        const auto denominator = qint32(reader.u32(entry.value + 4));
+        return denominator ? double(qint32(reader.u32(entry.value))) / denominator : 0;
+    }
+    }
+    return 0;
+}
+
+// The TIFF structure in a JPEG: the APP1 segment that starts "Exif\0\0".
+QByteArray fromJpeg(const QByteArray &data) {
+    int at = 2;
+    while (at + 4 <= data.size() && uchar(data[at]) == 0xFF) {
+        const uchar marker = uchar(data[at + 1]);
+        if (marker == 0xD9 || marker == 0xDA)  // the end, or the image data
+            break;
+        const int length = uchar(data[at + 2]) << 8 | uchar(data[at + 3]);
+        if (length < 2)
+            break;
+        if (marker == 0xE1 && data.mid(at + 4, 6) == QByteArray("Exif\0\0", 6))
+            return data.mid(at + 10, length - 8);
+        at += 2 + length;
+    }
+    return {};
+}
+
+// PNG's eXIf chunk holds the TIFF structure as it is.
+QByteArray fromPng(const QByteArray &data) {
+    qsizetype at = 8;
+    while (at + 12 <= data.size()) {
+        const auto *p = reinterpret_cast<const uchar *>(data.constData() + at);
+        const quint32 length = quint32(p[0]) << 24 | quint32(p[1]) << 16 | quint32(p[2]) << 8 | p[3];
+        const QByteArray type = data.mid(at + 4, 4);
+        if (type == "eXIf")
+            return data.mid(at + 8, length);
+        if (type == "IEND" || quint64(length) + 12 > quint64(data.size() - at))
+            break;
+        at += 12 + length;
+    }
+    return {};
+}
+
+// WebP's EXIF chunk, in its RIFF container, sometimes with JPEG's prefix.
+QByteArray fromWebp(const QByteArray &data) {
+    qsizetype at = 12;
+    while (at + 8 <= data.size()) {
+        const auto *p = reinterpret_cast<const uchar *>(data.constData() + at + 4);
+        const quint32 length = quint32(p[0]) | quint32(p[1]) << 8 | quint32(p[2]) << 16 | quint32(p[3]) << 24;
+        if (data.mid(at, 4) == "EXIF") {
+            QByteArray tiff = data.mid(at + 8, length);
+            if (tiff.startsWith(QByteArray("Exif\0\0", 6)))
+                tiff.remove(0, 6);
+            return tiff;
+        }
+        if (quint64(length) + 8 > quint64(data.size() - at))
+            break;
+        at += 8 + length + (length & 1);
+    }
+    return {};
+}
+
+}  // namespace
+
+bool Tags::empty() const {
+    return !taken.isValid() && make.isEmpty() && model.isEmpty() && lens.isEmpty() && exposure <= 0
+           && aperture <= 0 && focalLength <= 0 && iso <= 0;
+}
+
+QString Tags::camera() const {
+    if (model.isEmpty())
+        return make;
+    if (make.isEmpty() || model.startsWith(make.section(' ', 0, 0), Qt::CaseInsensitive))
+        return model;
+    // "NIKON CORPORATION" says only "NIKON" in front of its model.
+    return make.section(' ', 0, 0) + ' ' + model;
+}
+
+Tags parse(const QByteArray &tiff) {
+    Tags tags;
+    const Reader reader(tiff);
+    if (!reader.valid())
+        return tags;
+    const QHash<quint16, Entry> image = entries(reader, reader.u32(4));
+    tags.make = text(reader, image, 0x010F);
+    tags.model = text(reader, image, 0x0110);
+    QHash<quint16, Entry> photo;
+    if (image.contains(0x8769) && image.value(0x8769).type == 4)
+        photo = entries(reader, reader.u32(image.value(0x8769).value));
+    tags.exposure = number(reader, photo, 0x829A);
+    tags.aperture = number(reader, photo, 0x829D);
+    tags.iso = int(number(reader, photo, 0x8827));
+    tags.focalLength = number(reader, photo, 0x920A);
+    tags.focal35 = int(number(reader, photo, 0xA405));
+    tags.lens = text(reader, photo, 0xA434);
+    QString when = text(reader, photo, 0x9003);
+    if (when.isEmpty())
+        when = text(reader, image, 0x0132);
+    tags.taken = QDateTime::fromString(when, "yyyy:MM:dd HH:mm:ss");
+    return tags;
+}
+
+Tags read(const QString &path) {
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly))
+        return {};
+    // A JPEG's EXIF is at its start, but PNG and WebP may keep theirs after
+    // the pixels, so those are mapped whole rather than read.
+    const qint64 size = file.size();
+    const uchar *mapped = size > 16 ? file.map(0, size) : nullptr;
+    if (!mapped)
+        return {};
+    const QByteArray data = QByteArray::fromRawData(reinterpret_cast<const char *>(mapped), qsizetype(size));
+    Tags tags;
+    if (data.startsWith("\xFF\xD8"))
+        tags = parse(fromJpeg(data));
+    else if (data.startsWith("\x89PNG\r\n\x1a\n"))
+        tags = parse(fromPng(data));
+    else if (data.startsWith("RIFF") && data.mid(8, 4) == "WEBP")
+        tags = parse(fromWebp(data));
+    else if (data.startsWith("II*") || data.startsWith(QByteArray("MM\0*", 4)))
+        tags = parse(data);
+    file.unmap(const_cast<uchar *>(mapped));
+    return tags;
+}
+
+}  // namespace exif

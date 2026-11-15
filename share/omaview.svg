@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
-  <title>Video Player</title>
-  <desc>A dark picture with a yellow play triangle and a thin yellow progress line beneath it, on Omacut's dark tile.</desc>
+  <title>Media Viewer</title>
+  <desc>A photo of dark hills under a yellow sun, with a yellow play button on its corner, on Omacut's dark tile.</desc>
   <defs>
     <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0" stop-color="#2c2c2f"/>
@@ -14,17 +14,25 @@
       <stop offset="0" stop-color="#FFE45C"/>
       <stop offset="1" stop-color="#FFD60A"/>
     </linearGradient>
+    <clipPath id="frame">
+      <rect x="60" y="100" width="392" height="294" rx="24"/>
+    </clipPath>
   </defs>
 
   <!-- App background, as Omacut's -->
   <rect x="16" y="16" width="480" height="480" rx="112" fill="url(#tile)"/>
 
-  <!-- The picture, 16:9, and nothing else on it but play -->
-  <rect x="60" y="122" width="392" height="221" rx="24" fill="url(#picture)" stroke="#3a3a3e" stroke-width="4"/>
-  <path d="M218 174 L322 232.5 L218 291 Z" fill="url(#accent)" stroke="url(#accent)" stroke-width="18" stroke-linejoin="round"/>
+  <!-- The photo: a sun over two hills -->
+  <rect x="60" y="100" width="392" height="294" rx="24" fill="url(#picture)"/>
+  <g clip-path="url(#frame)">
+    <circle cx="164" cy="188" r="34" fill="url(#accent)"/>
+    <path d="M40 394 L178 262 L246 322 L330 228 L472 380 L472 420 L40 420 Z" fill="#45454b"/>
+    <path d="M40 394 L150 318 L232 394 Z" fill="#5a5a61"/>
+  </g>
+  <rect x="60" y="100" width="392" height="294" rx="24" fill="none" stroke="#3a3a3e" stroke-width="4"/>
 
-  <!-- The progress line: played in yellow, the rest dim -->
-  <rect x="60" y="374" width="392" height="14" rx="7" fill="#3a3a3e"/>
-  <rect x="60" y="374" width="160" height="14" rx="7" fill="url(#accent)"/>
-  <circle cx="220" cy="381" r="17" fill="url(#accent)"/>
+  <!-- Play, on its corner, cut out of the tile so it reads at small sizes -->
+  <circle cx="400" cy="384" r="86" fill="#1c1c1f"/>
+  <circle cx="400" cy="384" r="70" fill="url(#accent)"/>
+  <path d="M380 350 L432 384 L380 418 Z" fill="#161618" stroke="#161618" stroke-width="10" stroke-linejoin="round"/>
 </svg>

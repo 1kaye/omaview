@@ -1,5 +1,5 @@
-// Omaview — Omarchy's media player, Video Player in the launcher: open a video or a song and watch it, from
-// the keyboard, with nothing on screen but the picture.
+// Omaview — Omarchy's picture viewer and media player, Media Viewer in the launcher: open a picture, a video
+// or a song and look at it, from the keyboard, with nothing on screen but the picture.
 
 #include <QGuiApplication>
 #include <QIcon>

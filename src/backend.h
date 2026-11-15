@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QFileSystemWatcher>
 #include <QImage>
 #include <QJsonObject>
 #include <QMutex>
@@ -19,6 +20,7 @@
 #include <vector>
 
 #include "frames.h"
+#include "picture.h"
 #include "positions.h"
 #include "probe.h"
 #include "subtitles.h"
@@ -29,15 +31,23 @@ class QMediaPlayer;
 class QRhi;
 class QVideoSink;
 
-// What the window talks to. It owns the player, created with the first file
-// so a window with nothing to play never starts Qt Multimedia's FFmpeg
-// backend, and everything that is a decision or touches the disk: the
-// playlist, track choice, resume positions, subtitles beside the file, the
-// scrub previews, and frames out.
+// What the window talks to. It owns the player, created with the first video
+// or song so a window with nothing to play, or only pictures, never starts Qt
+// Multimedia's FFmpeg backend, and everything that is a decision or touches
+// the disk: the playlist, track choice, resume positions, subtitles beside
+// the file, the scrub previews, frames and pictures out, and the Trash. The
+// window decodes a picture itself, through Qt Quick's Image.
 class Backend : public QObject {
     Q_OBJECT
     Q_PROPERTY(bool playerReady READ playerReady NOTIFY playerReadyChanged)
     Q_PROPERTY(bool hasMedia READ hasMedia NOTIFY mediaChanged)
+    Q_PROPERTY(bool isPicture READ isPicture NOTIFY mediaChanged)
+    Q_PROPERTY(QUrl pictureSource READ pictureSource NOTIFY pictureChanged)
+    Q_PROPERTY(QSize pictureSize READ pictureSize NOTIFY pictureChanged)
+    Q_PROPERTY(bool animated READ animated NOTIFY pictureChanged)
+    Q_PROPERTY(bool vector READ vector NOTIFY pictureChanged)
+    Q_PROPERTY(bool transparent READ transparent NOTIFY pictureChanged)
+    Q_PROPERTY(int rotation READ rotation NOTIFY rotationChanged)
     Q_PROPERTY(QString fileName READ fileName NOTIFY mediaChanged)
     Q_PROPERTY(QString title READ title NOTIFY metadataChanged)
     Q_PROPERTY(QString artist READ artist NOTIFY metadataChanged)
@@ -69,7 +79,7 @@ class Backend : public QObject {
     Q_PROPERTY(int playlistIndex READ playlistIndex NOTIFY playlistChanged)
     Q_PROPERTY(int playlistCount READ playlistCount NOTIFY playlistChanged)
     Q_PROPERTY(QString nextName READ nextName NOTIFY playlistChanged)
-    Q_PROPERTY(bool canTrim READ canTrim CONSTANT)
+    Q_PROPERTY(bool canEdit READ canEdit NOTIFY mediaChanged)
     Q_PROPERTY(QUrl previewSource READ previewSource NOTIFY previewsChanged)
     Q_PROPERTY(int previewCount READ previewCount NOTIFY previewsChanged)
     Q_PROPERTY(int previewColumns READ previewColumns NOTIFY previewsChanged)
@@ -91,6 +101,13 @@ public:
 
     bool playerReady() const { return m_player != nullptr; }
     bool hasMedia() const { return !m_source.isEmpty(); }
+    bool isPicture() const { return m_picture; }
+    QUrl pictureSource() const;
+    QSize pictureSize() const { return m_pictureInfo.size; }
+    bool animated() const { return m_pictureInfo.animated; }
+    bool vector() const { return m_pictureInfo.vector; }
+    bool transparent() const { return m_pictureInfo.transparent; }
+    int rotation() const { return m_rotation; }
     QString fileName() const;
     QString filePath() const { return m_source.isLocalFile() ? m_source.toLocalFile() : QString(); }
     QUrl source() const { return m_source; }
@@ -125,7 +142,8 @@ public:
     int playlistIndex() const { return m_index; }
     int playlistCount() const { return int(m_playlist.size()); }
     QString nextName() const;
-    bool canTrim() const;
+    // Omasnap for a picture, Omacut for a video, when it is installed.
+    bool canEdit() const;
     QUrl previewSource() const { return m_previewSource; }
     int previewCount() const { return m_previewLayout.count; }
     int previewColumns() const { return m_previewLayout.columns; }
@@ -161,11 +179,25 @@ public:
     Q_INVOKABLE void cycleAudio();
     Q_INVOKABLE bool next();
     Q_INVOKABLE bool previous();
+    // Any file in the playlist, for the first and the last.
+    Q_INVOKABLE bool go(int index);
     Q_INVOKABLE void jumpChapter(int direction);
     Q_INVOKABLE QString chapterAt(qint64 ms) const;
-    Q_INVOKABLE void copyFrame();
+    // The picture, turned as it shows, or the video's frame on screen.
+    Q_INVOKABLE void copy();
     Q_INVOKABLE void saveFrame();
-    Q_INVOKABLE void trimInOmacut();
+    Q_INVOKABLE void edit();
+    // Turns the picture as it shows, by quarter turns; the file is never
+    // changed.
+    Q_INVOKABLE void rotate(int degrees);
+    // Sends the picture, turned as it shows, to the default printer.
+    Q_INVOKABLE void print();
+    // Moves the file shown to the Trash and shows the next; undoTrash() puts
+    // the last one back where it was.
+    Q_INVOKABLE bool trash();
+    Q_INVOKABLE bool undoTrash();
+    // The window couldn't decode the picture.
+    Q_INVOKABLE void pictureFailed();
     // True once, the first time any file is opened, for the "Press Tab" hint.
     Q_INVOKABLE bool takeFirstRunHint();
     // The window's VideoOutput, once its Loader has made it, and null as it
@@ -207,6 +239,8 @@ signals:
     void resumedAtChanged();
     void playlistChanged();
     void previewsChanged();
+    void pictureChanged();
+    void rotationChanged();
     // A short message for the on-screen display: what an action did.
     void notice(const QString &text);
     // Media keys and the bar asked for the window to come forward.
@@ -229,8 +263,14 @@ private:
 
     void ensurePlayer();
     void load(int index);
+    void loadPicture(const QString &item);
+    void readPicture();
+    void onPictureRead(const picture::Info &info, quint64 generation);
+    void clear();
+    void resetFile();
+    void copyFrame();
     void rememberPosition();
-    enum class Problem { None, Missing, Unreadable, Unplayable, Format, Network, Access };
+    enum class Problem { None, Missing, Unreadable, Unplayable, Format, Network, Access, PictureFormat, PictureBroken };
     void setError(Problem problem);
     void labelTracks();
     void emitFileChanged();
@@ -248,6 +288,8 @@ private:
     void updateChapter();
     void updateMetadata();
     void buildInfo();
+    template <typename Row>
+    void buildPictureInfo(Row row);
     void applyVolume();
     void startPreviews();
 
@@ -322,6 +364,20 @@ private:
     std::vector<std::pair<qint64, QString>> m_chapterList;
     QString m_chapterTitle;
     QVariantList m_info;
+
+    bool m_picture = false;
+    picture::Info m_pictureInfo;
+    int m_rotation = 0;
+    int m_revision = 0;  // a picture changed on disk, so the window reads it again
+    QFileSystemWatcher m_watcher;
+    QTimer m_changedTimer;
+
+    struct Trashed {
+        QString path;
+        QString inTrash;
+        int index = 0;
+    };
+    QList<Trashed> m_trashed;
 
     frames::Previews m_previews;
     QTimer m_previewTimer;

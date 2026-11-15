@@ -385,6 +385,103 @@ private slots:
         close(w);
     }
 
+    void picturesStepZoomAndTurn() {
+        // A folder of its own, as a camera's: two photos, an animation and a
+        // drawing with a see-through background.
+        const QString photos = m_dir.filePath("photos");
+        QVERIFY(QDir().mkpath(photos));
+        auto still = [&](const QString &source, const QString &name) {
+            return QProcess::execute("ffmpeg", {"-v", "error", "-y", "-f", "lavfi", "-i", source, "-frames:v", "1",
+                                                photos + "/" + name}) == 0;
+        };
+        QVERIFY(still("testsrc2=size=1600x900", "1-harbour.png"));
+        QVERIFY(still("mandelbrot=size=900x1200", "2-shell.jpg"));
+        QVERIFY(QProcess::execute("ffmpeg", {"-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=size=120x90:rate=5:duration=1",
+                                             photos + "/3-blink.gif"}) == 0);
+        QVERIFY(write(photos + "/4-mark.svg", "<svg xmlns='http://www.w3.org/2000/svg' width='64' height='32'>"
+                                              "<circle cx='16' cy='16' r='14' fill='#e5c07b'/></svg>"));
+
+        auto w = open(m_dir.filePath("pictures"));
+        QVERIFY(w->window);
+        QVERIFY(QTest::qWaitForWindowExposed(w->window));
+        w->window->requestActivate();
+        QVERIFY(QTest::qWaitForWindowActive(w->window));
+        w->backend->open({photos + "/1-harbour.png"});
+        auto *view = find<QQuickItem>(w.get(), "pictureView");
+        QTRY_VERIFY_WITH_TIMEOUT(view->property("ready").toBool(), 10000);
+        QTRY_COMPARE(w->backend->playlistCount(), 4);
+        // A picture never starts the player, and the window takes its shape.
+        QVERIFY(!w->backend->playerReady());
+        QTRY_COMPARE(qRound(w->window->width() * 900.0 / w->window->height()), 1600);
+        QVERIFY(view->property("fitted").toBool());
+        QVERIFY(!w->idle->active());
+        shot(w.get(), "10-picture");
+
+        // Zoomed in, the arrows move it about rather than step.
+        QTest::keyClick(w->window, Qt::Key_Plus);
+        QVERIFY(!view->property("fitted").toBool());
+        QVERIFY(view->property("pannable").toBool());
+        QTest::keyClick(w->window, Qt::Key_Left);
+        QVERIFY(view->property("panX").toDouble() > 0);
+        QCOMPARE(w->backend->playlistIndex(), 0);
+        QTest::keyClick(w->window, Qt::Key_1);
+        QCOMPARE(view->property("ratio").toDouble(), 1.0);
+        QTest::keyClick(w->window, Qt::Key_0);
+        QVERIFY(view->property("fitted").toBool());
+        QCOMPARE(view->property("panX").toDouble(), 0.0);
+
+        // Fitted, they step; a turn swaps its shape and the next file is upright.
+        QTest::keyClick(w->window, Qt::Key_Right);
+        QCOMPARE(w->backend->fileName(), QString("2-shell.jpg"));
+        QTRY_COMPARE(view->property("naturalWidth").toDouble(), 900.0);
+        QTest::keyClick(w->window, Qt::Key_R);
+        QCOMPARE(w->backend->rotation(), 90);
+        QCOMPARE(view->property("turnedWidth").toDouble(), 1200.0);
+        QTest::keyClick(w->window, Qt::Key_Tab);
+        QTRY_VERIFY(find<QQuickItem>(w.get(), "overlay")->property("item").value<QQuickItem *>());
+        shot(w.get(), "11-picture-overlay");
+        QTest::keyClick(w->window, Qt::Key_Escape);
+
+        // An animation pauses on Space; End and Home go to the last and first.
+        QTest::keyClick(w->window, Qt::Key_End);
+        QCOMPARE(w->backend->fileName(), QString("4-mark.svg"));
+        QCOMPARE(w->backend->rotation(), 0);
+        QTRY_VERIFY(w->backend->vector() && w->backend->transparent());
+        QTRY_VERIFY(view->property("ready").toBool());
+        QTest::keyClick(w->window, Qt::Key_Left);
+        QCOMPARE(w->backend->fileName(), QString("3-blink.gif"));
+        QTRY_VERIFY(w->backend->animated());
+        QTest::keyClick(w->window, Qt::Key_Space);
+        QVERIFY(view->property("paused").toBool());
+        QTest::keyClick(w->window, Qt::Key_Home);
+        QCOMPARE(w->backend->fileName(), QString("1-harbour.png"));
+        QVERIFY(!view->property("paused").toBool());
+
+        // The ? overlay lists a picture's keys first.
+        QTest::keyClick(w->window, Qt::Key_F1);
+        auto *help = find<QObject>(w.get(), "help");
+        QTRY_VERIFY(help->property("opened").toBool());
+        QCOMPARE(w->window->property("shortcutList").toList().value(1).toMap().value("action").toString(),
+                 QString("Previous or next file"));
+        shot(w.get(), "12-picture-keys");
+        QVERIFY2(w->warnings.isEmpty(), qPrintable(w->warnings.join('\n')));
+        close(w);
+    }
+
+    void aPictureThatWontShowSaysWhy() {
+        auto w = open(m_dir.filePath("broken-picture"));
+        QVERIFY(w->window);
+        QVERIFY(QTest::qWaitForWindowExposed(w->window));
+        const QString broken = m_dir.filePath("broken.png");
+        QVERIFY(write(broken, "this is not a picture"));
+        w->backend->open({broken});
+        QTRY_COMPARE(w->backend->error(), QString("Its format isn't one Omaview can show."));
+        QTRY_VERIFY(find<QQuickItem>(w.get(), "error")->isVisible());
+        QVERIFY(!w->backend->playerReady());
+        QVERIFY2(w->warnings.isEmpty(), qPrintable(w->warnings.join('\n')));
+        close(w);
+    }
+
     void aFileThatWontPlaySaysWhy() {
         auto w = open(m_dir.filePath("broken"));
         QVERIFY(w->window);

@@ -15,6 +15,7 @@
 #include <QPointer>
 #include <QProcess>
 #include <QStandardPaths>
+#include <QTemporaryFile>
 #include <QTime>
 #include <QVideoSink>
 #include <QtAudio>
@@ -132,6 +133,26 @@ Backend::Backend(const Options &options, QObject *parent)
     m_preferenceTimer.setInterval(500);
     connect(&m_preferenceTimer, &QTimer::timeout, this, &Backend::writePreferences);
 
+    // A picture changed on disk, as an editor saves it, is read again once
+    // the writing has settled, so a half-written file is never shown.
+    m_changedTimer.setSingleShot(true);
+    m_changedTimer.setInterval(300);
+    connect(&m_watcher, &QFileSystemWatcher::fileChanged, this, [this](const QString &path) {
+        if (m_picture && path == filePath())
+            m_changedTimer.start();
+    });
+    connect(&m_changedTimer, &QTimer::timeout, this, [this] {
+        const QString path = filePath();
+        if (!m_picture || !QFileInfo::exists(path))
+            return;
+        // Saving by renaming over the file ends the watch, so it is set again.
+        if (!m_watcher.files().contains(path))
+            m_watcher.addPath(path);
+        ++m_revision;
+        readPicture();
+        emit pictureChanged();
+    });
+
     m_previewTimer.setSingleShot(true);
     m_previewTimer.setInterval(m_options.previewDelayMs);
     connect(&m_previewTimer, &QTimer::timeout, this, &Backend::startPreviews);
@@ -210,8 +231,21 @@ QString Backend::nextName() const {
     return url.isLocalFile() ? QFileInfo(url.toLocalFile()).fileName() : next;
 }
 
-bool Backend::canTrim() const {
-    return !QStandardPaths::findExecutable("omacut").isEmpty();
+bool Backend::canEdit() const {
+    return m_source.isLocalFile() && !QStandardPaths::findExecutable(m_picture ? "omasnap" : "omacut").isEmpty();
+}
+
+QUrl Backend::pictureSource() const {
+    // A local picture waits for its header, so one Qt can't read is said so
+    // in plain words rather than handed to the window to fail on.
+    if (!m_picture || m_problem != Problem::None || (m_source.isLocalFile() && m_pictureInfo.format.isEmpty()))
+        return {};
+    // A fragment of its own makes Qt Quick read a changed file again rather
+    // than show the copy it cached; a local file is read without it.
+    QUrl url = m_source;
+    if (m_revision > 0)
+        url.setFragment(QStringLiteral("r%1").arg(m_revision));
+    return url;
 }
 
 QString Backend::subtitleLabel() const {
@@ -382,10 +416,9 @@ void Backend::openDialog() {
     m_picker->openMedia();
 }
 
-void Backend::load(int index) {
-    if (index < 0 || index >= m_playlist.size())
-        return;
-    ensurePlayer();
+// What the last file left behind, cleared before the next one, whatever it
+// is.
+void Backend::resetFile() {
     m_previews.cancel();
     m_previewTimer.stop();
     m_previewsWanted = false;
@@ -394,10 +427,6 @@ void Backend::load(int index) {
         *m_cancel = true;
     m_cancel = std::make_shared<std::atomic_bool>(false);
     ++m_generation;
-    m_index = index;
-    const QString item = m_playlist.at(index);
-    m_source = QUrl::fromUserInput(item, QDir::currentPath(), QUrl::AssumeLocalFile);
-
     m_title.clear();
     m_artist.clear();
     m_coverArt.clear();
@@ -439,6 +468,27 @@ void Backend::load(int index) {
     m_info.clear();
     m_previewSource.clear();
     m_previewLayout = frames::PreviewLayout();
+    m_picture = false;
+    m_pictureInfo = picture::Info();
+    m_rotation = 0;
+    m_revision = 0;
+    m_changedTimer.stop();
+    if (!m_watcher.files().isEmpty())
+        m_watcher.removePaths(m_watcher.files());
+}
+
+void Backend::load(int index) {
+    if (index < 0 || index >= m_playlist.size())
+        return;
+    m_index = index;
+    const QString item = m_playlist.at(index);
+    if (playlist::picture(item)) {
+        loadPicture(item);
+        return;
+    }
+    ensurePlayer();
+    resetFile();
+    m_source = QUrl::fromUserInput(item, QDir::currentPath(), QUrl::AssumeLocalFile);
 
     if (m_source.isLocalFile()) {
         const QString path = m_source.toLocalFile();
@@ -479,12 +529,89 @@ void Backend::load(int index) {
     m_player->play();
 }
 
+// A picture never starts the player: one already playing a video stops and
+// lets the file go.
+void Backend::loadPicture(const QString &item) {
+    resetFile();
+    m_source = QUrl::fromUserInput(item, QDir::currentPath(), QUrl::AssumeLocalFile);
+    m_picture = true;
+    if (m_player) {
+        m_player->stop();
+        m_player->setSource(QUrl());
+    }
+    // The player doesn't always say these went with its file; onStatus()
+    // takes them from it again when the next video loads.
+    m_duration = 0;
+    m_seekable = false;
+    m_hasVideo = false;
+    if (m_source.isLocalFile()) {
+        const QString path = m_source.toLocalFile();
+        if (!QFileInfo(path).isReadable()) {
+            m_problem = QFileInfo::exists(path) ? Problem::Unreadable : Problem::Missing;
+        } else {
+            m_watcher.addPath(path);
+            readPicture();
+        }
+    }
+    buildInfo();
+    emitFileChanged();
+}
+
+void Backend::readPicture() {
+    const QString path = filePath();
+    const quint64 generation = m_generation;
+    QPointer<Backend> self(this);
+    (void)QtConcurrent::run([self, path, generation] {
+        QEventLoopLocker keepRunning;
+        const picture::Info info = picture::read(path);
+        QMetaObject::invokeMethod(qApp, [self, info, generation] {
+            if (self)
+                self->onPictureRead(info, generation);
+        }, Qt::QueuedConnection);
+    });
+}
+
+void Backend::onPictureRead(const picture::Info &info, quint64 generation) {
+    if (generation != m_generation || !m_picture)
+        return;
+    m_pictureInfo = info;
+    if (!info.ok())
+        setError(Problem::PictureFormat);
+    else if (m_problem == Problem::PictureBroken && m_revision > 0)
+        setError(Problem::None);  // an editor has finished writing it
+    buildInfo();
+    emit pictureChanged();
+    emit infoChanged();
+    emit metadataChanged();
+}
+
+void Backend::pictureFailed() {
+    if (m_picture && m_problem == Problem::None)
+        setError(Problem::PictureBroken);
+}
+
+// Nothing open: the last file went to the Trash.
+void Backend::clear() {
+    resetFile();
+    if (m_player) {
+        m_player->stop();
+        m_player->setSource(QUrl());
+    }
+    m_source = QUrl();
+    m_playlist.clear();
+    m_index = -1;
+    emitFileChanged();
+}
+
 // Everything a new file changes, said once, whichever way load() ended.
 void Backend::emitFileChanged() {
     emit mediaChanged();
     emit metadataChanged();
     emit errorChanged();
     emit positionChanged();
+    emit durationChanged();
+    emit seekableChanged();
+    emit hasVideoChanged();
     emit statusChanged();
     emit playingChanged();
     emit subtitleTextChanged();
@@ -494,6 +621,8 @@ void Backend::emitFileChanged() {
     emit resumedAtChanged();
     emit playlistChanged();
     emit previewsChanged();
+    emit pictureChanged();
+    emit rotationChanged();
 }
 
 void Backend::setError(Problem problem) {
@@ -512,6 +641,8 @@ QString Backend::error() const {
     case Problem::Format: return tr("Its format or codec isn't one ffmpeg can play.");
     case Problem::Network: return tr("The stream could not be reached.");
     case Problem::Access: return tr("Permission to open it was denied.");
+    case Problem::PictureFormat: return tr("Its format isn't one Omaview can show.");
+    case Problem::PictureBroken: return tr("This picture could not be shown.");
     case Problem::Unplayable: break;
     }
     return tr("This file could not be played.");
@@ -525,6 +656,15 @@ void Backend::onStatus() {
             if (m_hasVideo != m_player->hasVideo()) {
                 m_hasVideo = m_player->hasVideo();
                 emit hasVideoChanged();
+            }
+            // Nor do these when a picture came between two videos as long.
+            if (m_duration != m_player->duration()) {
+                m_duration = m_player->duration();
+                emit durationChanged();
+            }
+            if (m_seekable != m_player->isSeekable()) {
+                m_seekable = m_player->isSeekable();
+                emit seekableChanged();
             }
             if (m_pendingResume > 0 && m_player->isSeekable()) {
                 m_resumedAt = m_pendingResume;
@@ -848,6 +988,10 @@ void Backend::buildInfo() {
     };
     const QLocale locale;
     row(tr("File"), fileName());
+    if (m_picture) {
+        buildPictureInfo(row);
+        return;
+    }
     if (!m_probe.ok()) {
         row(tr("Problem"), m_probe.error);
         return;
@@ -894,6 +1038,45 @@ void Backend::buildInfo() {
     m_summary = join(summary);
 }
 
+template <typename Row>
+void Backend::buildPictureInfo(Row row) {
+    const picture::Info &info = m_pictureInfo;
+    if (info.format.isEmpty())
+        return;
+    const QLocale locale;
+    const QString dimensions = QString("%1 × %2").arg(info.size.width()).arg(info.size.height());
+    const double megapixels = double(info.size.width()) * info.size.height() / 1e6;
+    row(tr("Format"), info.format);
+    row(tr("Dimensions"), info.vector || megapixels < 0.1
+                              ? dimensions
+                              : join({dimensions, tr("%1 MP").arg(locale.toString(megapixels, 'f', 1))}));
+    if (info.bytes > 0)
+        row(tr("Size"), locale.formattedDataSize(info.bytes));
+    if (info.animated)
+        row(tr("Frames"), locale.toString(info.frames));
+    const exif::Tags &exif = info.exif;
+    if (exif.taken.isValid())
+        row(tr("Taken"), join({locale.toString(exif.taken.date(), QLocale::LongFormat),
+                               locale.toString(exif.taken.time(), QLocale::ShortFormat)}));
+    row(tr("Camera"), exif.camera());
+    row(tr("Lens"), exif.lens);
+    QStringList exposure;
+    if (exif.exposure > 0)
+        exposure << tr("%1 s").arg(exif.exposure >= 1 ? locale.toString(exif.exposure, 'g', 3)
+                                                       : QString("1/%1").arg(qRound(1 / exif.exposure)));
+    if (exif.aperture > 0)
+        exposure << "f/" + locale.toString(exif.aperture, 'f', exif.aperture < 10 ? 1 : 0);
+    if (exif.iso > 0)
+        exposure << "ISO " + locale.toString(exif.iso);
+    // What a phone's tiny lens is as a 35 mm camera's, which people compare.
+    if (exif.focal35 > 0)
+        exposure << tr("%1 mm").arg(locale.toString(exif.focal35));
+    else if (exif.focalLength > 0)
+        exposure << tr("%1 mm").arg(locale.toString(exif.focalLength, 'f', 0));
+    row(tr("Exposure"), join(exposure));
+    m_summary = join({dimensions, info.format, info.bytes > 0 ? locale.formattedDataSize(info.bytes) : QString()});
+}
+
 void Backend::applyVolume() {
     if (!m_audio)
         return;
@@ -913,7 +1096,7 @@ void Backend::togglePlay() {
 }
 
 void Backend::play() {
-    if (!m_player)
+    if (!m_player || m_picture)
         return;
     m_stopped = false;
     if (m_ended) {
@@ -1047,20 +1230,19 @@ void Backend::cycleAudio() {
 }
 
 bool Backend::next() {
-    if (m_index + 1 >= m_playlist.size())
-        return false;
-    rememberPosition();
-    ++m_listGeneration;
-    load(m_index + 1);
-    return true;
+    return go(m_index + 1);
 }
 
 bool Backend::previous() {
-    if (m_index <= 0)
+    return go(m_index - 1);
+}
+
+bool Backend::go(int index) {
+    if (index < 0 || index >= m_playlist.size() || index == m_index)
         return false;
     rememberPosition();
     ++m_listGeneration;
-    load(m_index - 1);
+    load(index);
     return true;
 }
 
@@ -1145,19 +1327,141 @@ bool Backend::takeFirstRunHint() {
     return true;
 }
 
-void Backend::trimInOmacut() {
-    const QString omacut = QStandardPaths::findExecutable("omacut");
-    if (omacut.isEmpty() || !m_source.isLocalFile())
+void Backend::edit() {
+    // Cutting is Omacut's job and drawing on a picture Omasnap's: the file is
+    // handed over rather than either grown in here.
+    const QString name = m_picture ? QStringLiteral("Omasnap") : QStringLiteral("Omacut");
+    const QString tool = QStandardPaths::findExecutable(name.toLower());
+    if (tool.isEmpty() || !m_source.isLocalFile())
         return;
     pause();
-    if (QProcess::startDetached(omacut, {m_source.toLocalFile()}))
-        emit notice(tr("Opened in Omacut"));
+    if (QProcess::startDetached(tool, {m_source.toLocalFile()}))
+        emit notice(tr("Opened in %1").arg(name));
     else
-        emit notice(tr("Omacut could not be started."));
+        emit notice(tr("%1 could not be started.").arg(name));
+}
+
+void Backend::rotate(int degrees) {
+    if (!m_picture)
+        return;
+    m_rotation = ((m_rotation + degrees) % 360 + 360) % 360;
+    emit rotationChanged();
+}
+
+void Backend::copy() {
+    if (!m_picture) {
+        copyFrame();
+        return;
+    }
+    if (!m_source.isLocalFile() || m_problem != Problem::None)
+        return;
+    // Decoded and encoded in a worker: a large photo takes a moment.
+    const QString path = m_source.toLocalFile();
+    const int rotation = m_rotation;
+    QPointer<Backend> self(this);
+    (void)QtConcurrent::run([self, path, rotation] {
+        QEventLoopLocker keepRunning;
+        const QImage image = picture::load(path, rotation);
+        QByteArray png;
+        if (!image.isNull()) {
+            QBuffer buffer(&png);
+            buffer.open(QIODevice::WriteOnly);
+            image.save(&buffer, "PNG");
+        }
+        const bool copied = !png.isEmpty() && frames::copyWithWlCopy(png);
+        QMetaObject::invokeMethod(qApp, [self, image, copied] {
+            if (!copied && !image.isNull())
+                QGuiApplication::clipboard()->setImage(image);
+            if (self)
+                emit self->notice(image.isNull() ? tr("Could not copy this picture.") : tr("Copied the picture"));
+        }, Qt::QueuedConnection);
+    });
+}
+
+void Backend::print() {
+    if (!m_picture || !m_source.isLocalFile() || m_problem != Problem::None)
+        return;
+    const QString lp = QStandardPaths::findExecutable("lp");
+    if (lp.isEmpty()) {
+        emit notice(tr("Printing needs lp, from CUPS."));
+        return;
+    }
+    // Straight to the default printer, as Omarchy's imv binding did. A turned
+    // picture prints as it shows, from a copy that goes once lp has queued it.
+    const QString path = m_source.toLocalFile(), name = fileName();
+    const int rotation = m_rotation;
+    QPointer<Backend> self(this);
+    (void)QtConcurrent::run([self, lp, path, name, rotation] {
+        QEventLoopLocker keepRunning;
+        QString file = path, message;
+        QTemporaryFile turned(QDir::tempPath() + "/omaview-print-XXXXXX.png");
+        if (rotation != 0) {
+            const QImage image = picture::load(path, rotation, &message);
+            if (image.isNull() || !turned.open() || !image.save(&turned, "PNG"))
+                file.clear();
+            else
+                file = turned.fileName();
+            turned.close();
+        }
+        bool sent = false;
+        if (!file.isEmpty()) {
+            QProcess process;
+            process.start(lp, {file});
+            sent = process.waitForFinished(60000) && process.exitStatus() == QProcess::NormalExit
+                   && process.exitCode() == 0;
+            message = QString::fromLocal8Bit(process.readAllStandardError()).trimmed();
+        }
+        QMetaObject::invokeMethod(qApp, [self, sent, name, message] {
+            if (self)
+                emit self->notice(sent ? tr("Sent %1 to the printer").arg(name) : tr("Could not print: %1").arg(message));
+        }, Qt::QueuedConnection);
+    });
+}
+
+bool Backend::trash() {
+    if (!m_source.isLocalFile() || m_index < 0 || m_index >= m_playlist.size())
+        return false;
+    // Renamed into the Trash while the player may still read it, which Linux
+    // allows, so a failure leaves the video playing.
+    const QString path = m_source.toLocalFile();
+    QString inTrash;
+    if (!QFile::moveToTrash(path, &inTrash)) {
+        emit notice(tr("Could not move %1 to the Trash.").arg(fileName()));
+        return false;
+    }
+    m_trashed.append({path, inTrash, m_index});
+    m_loaded = false;  // nothing to remember about a file that's gone
+    m_playlist.removeAt(m_index);
+    ++m_listGeneration;
+    if (m_playlist.isEmpty())
+        clear();
+    else
+        load(std::min(m_index, int(m_playlist.size()) - 1));
+    return true;
+}
+
+bool Backend::undoTrash() {
+    if (m_trashed.isEmpty())
+        return false;
+    const Trashed item = m_trashed.takeLast();
+    const QString name = QFileInfo(item.path).fileName();
+    if (QFileInfo::exists(item.path) || !QFile::rename(item.inTrash, item.path)) {
+        emit notice(tr("Could not put %1 back.").arg(name));
+        return false;
+    }
+    // The Trash's record of it, in info/ beside files/, goes too.
+    const QFileInfo trashed(item.inTrash);
+    QFile::remove(trashed.absolutePath() + "/../info/" + trashed.fileName() + ".trashinfo");
+    rememberPosition();
+    const int at = std::clamp(item.index, 0, int(m_playlist.size()));
+    m_playlist.insert(at, item.path);
+    ++m_listGeneration;
+    load(at);
+    return true;
 }
 
 void Backend::rememberPosition() {
-    if (!m_player || !m_source.isLocalFile() || !m_loaded || m_problem != Problem::None)
+    if (!m_player || m_picture || !m_source.isLocalFile() || !m_loaded || m_problem != Problem::None)
         return;
     const QString file = m_source.toLocalFile();
     const qint64 position = m_ended ? m_duration : m_position, duration = m_duration;

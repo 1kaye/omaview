@@ -15,11 +15,21 @@ const QString playerInterface = QStringLiteral("org.mpris.MediaPlayer2.Player");
 
 Mpris::Mpris(Backend *backend, QObject *parent, const QDBusConnection &bus)
     : QObject(parent), m_backend(backend), m_bus(bus) {
-    auto *root = new MprisRoot(this);
-    auto *player = new MprisPlayer(this);
-    Q_UNUSED(root);
+    new MprisRoot(this);
+    new MprisPlayer(this);
 
-    if (!m_bus.isConnected())
+    // Only once a video or song has played: a window showing photos isn't a
+    // player, and would take the media keys from the one that is.
+    if (backend->playerReady())
+        start();
+    else
+        connect(backend, &Backend::playerReadyChanged, this, &Mpris::start, Qt::SingleShotConnection);
+}
+
+void Mpris::start() {
+    Backend *backend = m_backend;
+    auto *player = findChild<MprisPlayer *>();
+    if (!m_bus.isConnected() || !m_service.isEmpty())
         return;
     const QString name = QStringLiteral("org.mpris.MediaPlayer2.omaview.instance%1").arg(QCoreApplication::applicationPid());
     if (!m_bus.registerObject(objectPath, this) || !m_bus.registerService(name))

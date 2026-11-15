@@ -2,8 +2,11 @@
 #include <QDBusPendingCall>
 #include <QDBusVariant>
 #include <QDBusReply>
+#include <QBuffer>
 #include <QDir>
 #include <QFile>
+#include <QImage>
+#include <QtEndian>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLocalServer>
@@ -22,8 +25,10 @@
 
 #include "backend.h"
 #include "cli.h"
+#include "exif.h"
 #include "frames.h"
 #include "mpris.h"
+#include "picture.h"
 #include "playlist.h"
 #include "positions.h"
 #include "probe.h"
@@ -36,6 +41,79 @@ namespace {
 bool write(const QString &path, const QByteArray &contents) {
     QFile file(path);
     return file.open(QIODevice::WriteOnly) && file.write(contents) == contents.size();
+}
+
+// A camera's EXIF, as the TIFF structure inside a JPEG's APP1 segment.
+struct Tag {
+    quint16 tag;
+    quint16 type;
+    quint32 count;
+    QByteArray value;
+};
+Tag ascii(quint16 tag, const QByteArray &text) { return {tag, 2, quint32(text.size() + 1), text + '\0'}; }
+Tag shortTag(quint16 tag, quint16 value) {
+    QByteArray bytes(2, 0);
+    qToLittleEndian(value, bytes.data());
+    return {tag, 3, 1, bytes};
+}
+Tag longTag(quint16 tag, quint32 value) {
+    QByteArray bytes(4, 0);
+    qToLittleEndian(value, bytes.data());
+    return {tag, 4, 1, bytes};
+}
+Tag rational(quint16 tag, quint32 numerator, quint32 denominator) {
+    QByteArray bytes(8, 0);
+    qToLittleEndian(numerator, bytes.data());
+    qToLittleEndian(denominator, bytes.data() + 4);
+    return {tag, 5, 1, bytes};
+}
+
+QByteArray tiff(QList<Tag> image, const QList<Tag> &photo) {
+    const quint32 imageAt = 8, photoAt = imageAt + 2 + quint32(image.size() + 1) * 12 + 4;
+    const quint32 dataAt = photoAt + 2 + quint32(photo.size()) * 12 + 4;
+    image.append(longTag(0x8769, photoAt));
+    QByteArray out("II*\0", 4), data;
+    auto u16 = [&](quint16 v) { QByteArray b(2, 0); qToLittleEndian(v, b.data()); out += b; };
+    auto u32 = [&](quint32 v) { QByteArray b(4, 0); qToLittleEndian(v, b.data()); out += b; };
+    u32(imageAt);
+    for (const QList<Tag> &ifd : {image, photo}) {
+        u16(quint16(ifd.size()));
+        for (const Tag &tag : ifd) {
+            u16(tag.tag);
+            u16(tag.type);
+            u32(tag.count);
+            if (tag.value.size() <= 4) {
+                out += tag.value + QByteArray(4 - tag.value.size(), 0);
+            } else {
+                u32(dataAt + quint32(data.size()));
+                data += tag.value;
+            }
+        }
+        u32(0);
+    }
+    return out + data;
+}
+
+// A photo of a size as stored, with a camera's EXIF: an orientation of 6
+// means it is shown turned a quarter clockwise.
+bool writePhoto(const QString &path, QSize stored, quint16 orientation) {
+    QImage image(stored, QImage::Format_RGB32);
+    image.fill(Qt::darkCyan);
+    QByteArray jpeg;
+    QBuffer buffer(&jpeg);
+    buffer.open(QIODevice::WriteOnly);
+    if (!image.save(&buffer, "JPEG"))
+        return false;
+    const QByteArray exif = QByteArray("Exif\0\0", 6)
+                            + tiff({ascii(0x010F, "Canon"), ascii(0x0110, "Canon EOS R5"), shortTag(0x0112, orientation)},
+                                   {rational(0x829A, 1, 250), rational(0x829D, 28, 10), shortTag(0x8827, 400),
+                                    ascii(0x9003, "2026:07:14 18:30:05"), rational(0x920A, 50, 1),
+                                    shortTag(0xA405, 50), ascii(0xA434, "RF50mm F1.8 STM")});
+    QByteArray segment("\xFF\xE1");
+    segment += char((exif.size() + 2) >> 8);
+    segment += char((exif.size() + 2) & 0xFF);
+    jpeg.insert(2, segment + exif);
+    return write(path, jpeg);
 }
 
 int lines(const QString &path) {
@@ -182,6 +260,7 @@ class OmaviewTests : public QObject {
 
     QTemporaryDir m_home;
     QString m_clip;
+    QString m_picture;
 
 private slots:
     void initTestCase() {
@@ -202,6 +281,12 @@ private slots:
                                        "language=eng", "-metadata:s:s:0", "language=eng", "-metadata:s:s:1",
                                        "language=dan", "clip.mkv"}));
         m_clip = m_home.filePath("clip.mkv");
+        // A photo taken upright on a camera held on its side, beside a clip
+        // from the same day, as a phone's camera folder has them.
+        QVERIFY(QDir(m_home.path()).mkpath("photos"));
+        m_picture = m_home.filePath("photos/photo.jpg");
+        QVERIFY(writePhoto(m_picture, QSize(600, 400), 6));
+        QVERIFY(QFile::copy(m_clip, m_home.filePath("photos/clip.mkv")));
     }
 
     // ffprobe
@@ -323,9 +408,188 @@ private slots:
         QStringList names;
         for (const QString &path : playlist::siblings(dir.filePath("episode 2.mkv")))
             names << QFileInfo(path).fileName();
-        QCOMPARE(names, (QStringList{"Episode 1.mp4", "episode 2.mkv", "Episode 10.mkv", "song.flac"}));
+        QCOMPARE(names, (QStringList{"cover.jpg", "Episode 1.mp4", "episode 2.mkv", "Episode 10.mkv", "song.flac"}));
         QVERIFY(playlist::audioOnly("a.FLAC"));
         QVERIFY(!playlist::playable("a.txt"));
+    }
+
+    void songsAndPicturesDontMix() {
+        QTemporaryDir dir;
+        for (const char *name : {"IMG_2.jpg", "IMG_10.HEIC", "IMG_3.mov", "memo.m4a", "scan.pdf", "IMG_1.png"})
+            QVERIFY(write(dir.filePath(name), "x"));
+        auto names = [&](const char *opened) {
+            QStringList found;
+            for (const QString &path : playlist::siblings(dir.filePath(opened)))
+                found << QFileInfo(path).fileName();
+            return found;
+        };
+        // HEIC counts only where an image plugin reads it, and a PDF never.
+        const bool heic = playlist::picture("x.heic");
+        QStringList photos{"IMG_1.png", "IMG_2.jpg", "IMG_3.mov"};
+        if (heic)
+            photos << "IMG_10.HEIC";
+        QCOMPARE(names("IMG_2.jpg"), photos);
+        QCOMPARE(names("memo.m4a"), (QStringList{"IMG_3.mov", "memo.m4a"}));
+        QVERIFY(!playlist::playable("scan.pdf"));
+        QVERIFY(playlist::picture("https://example.com/photo.webp?w=800"));
+    }
+
+    // Pictures
+
+    void exifIsRead() {
+        const exif::Tags tags = exif::read(m_picture);
+        QCOMPARE(tags.camera(), QString("Canon EOS R5"));
+        QCOMPARE(tags.lens, QString("RF50mm F1.8 STM"));
+        QCOMPARE(tags.exposure, 1.0 / 250);
+        QCOMPARE(tags.aperture, 2.8);
+        QCOMPARE(tags.iso, 400);
+        QCOMPARE(tags.focal35, 50);
+        QCOMPARE(tags.taken, QDateTime(QDate(2026, 7, 14), QTime(18, 30, 5)));
+        // Nikon says its name in full as the make, and only "NIKON" before
+        // the model.
+        exif::Tags nikon;
+        nikon.make = "NIKON CORPORATION";
+        nikon.model = "Z 6";
+        QCOMPARE(nikon.camera(), QString("NIKON Z 6"));
+        // Nothing in a file without it, nor in a truncated one.
+        QVERIFY(exif::read(m_clip).empty());
+        QVERIFY(exif::parse(QByteArray("II*\0\x08\0\0\0\xFF\xFF", 10)).empty());
+    }
+
+    void picturesAreReadUpright() {
+        const picture::Info info = picture::read(m_picture);
+        QVERIFY2(info.ok(), qPrintable(info.error));
+        QCOMPARE(info.format, QString("JPEG"));
+        QCOMPARE(info.size, QSize(400, 600));
+        QVERIFY(!info.animated && !info.transparent && !info.vector);
+        QCOMPARE(info.exif.iso, 400);
+        QCOMPARE(picture::load(m_picture).size(), QSize(400, 600));
+        QCOMPARE(picture::load(m_picture, 90).size(), QSize(600, 400));
+
+        QTemporaryDir dir;
+        QImage clear(32, 16, QImage::Format_ARGB32);
+        clear.fill(Qt::transparent);
+        QVERIFY(clear.save(dir.filePath("clear.png")));
+        QVERIFY(picture::read(dir.filePath("clear.png")).transparent);
+        QVERIFY(write(dir.filePath("broken.png"), "not a picture"));
+        QVERIFY(!picture::read(dir.filePath("broken.png")).ok());
+    }
+
+    void aPictureNeverStartsThePlayer() {
+        QTemporaryDir state;
+        Backend::Options options;
+        options.positionsPath = state.filePath("positions.json");
+        options.audio = false;
+        options.previews = false;
+        Backend backend(options);
+        backend.open({m_picture});
+        QVERIFY(backend.isPicture());
+        QVERIFY(!backend.playerReady());
+        // The window gets the picture once its header has been read.
+        QCOMPARE(backend.pictureSource(), QUrl());
+        QTRY_COMPARE(backend.pictureSource(), QUrl::fromLocalFile(m_picture));
+        QCOMPARE(backend.pictureSize(), QSize(400, 600));
+        QTRY_COMPARE(backend.playlistCount(), 2);
+        QStringList rows;
+        for (const QVariant &row : backend.info())
+            rows << row.toMap().value("label").toString() + ": " + row.toMap().value("value").toString();
+        QVERIFY2(rows.contains("Camera: Canon EOS R5"), qPrintable(rows.join('\n')));
+        QVERIFY2(rows.contains("Exposure: 1/250 s · f/2.8 · ISO 400 · 50 mm"), qPrintable(rows.join('\n')));
+        QVERIFY(rows.contains("Dimensions: 400 × 600 · 0.2 MP"));
+        QCOMPARE(backend.summary(), QString("400 × 600 · JPEG · ") + QLocale().formattedDataSize(QFileInfo(m_picture).size()));
+
+        // Turned as it shows, by quarter turns either way, and anew for the
+        // next picture.
+        backend.rotate(90);
+        backend.rotate(-180);
+        QCOMPARE(backend.rotation(), 270);
+        backend.play();
+        QVERIFY(!backend.playerReady());
+
+        // The clip beside it plays, and stepping back to the photo stops it.
+        QVERIFY(backend.previous());
+        QVERIFY(!backend.isPicture());
+        QTRY_VERIFY_WITH_TIMEOUT(backend.playing(), 10000);
+        QVERIFY(backend.next());
+        QVERIFY(backend.isPicture());
+        QCOMPARE(backend.rotation(), 0);
+        QTRY_VERIFY(!backend.playing());
+        QCOMPARE(backend.duration(), qint64(0));
+        backend.close();
+    }
+
+    void aChangedPictureIsReadAgain() {
+        QTemporaryDir dir;
+        const QString path = dir.filePath("edit.png");
+        QImage image(40, 20, QImage::Format_RGB32);
+        image.fill(Qt::red);
+        QVERIFY(image.save(path));
+        Backend::Options options;
+        options.positionsPath = dir.filePath("positions.json");
+        options.audio = false;
+        options.previews = false;
+        Backend backend(options);
+        backend.open({path});
+        QTRY_COMPARE(backend.pictureSize(), QSize(40, 20));
+        // Saved as an editor saves: a new file renamed over the old.
+        QImage wider(80, 20, QImage::Format_RGB32);
+        wider.fill(Qt::blue);
+        QVERIFY(wider.save(dir.filePath("edit.tmp.png")));
+        QFile::remove(path);
+        QVERIFY(QFile::rename(dir.filePath("edit.tmp.png"), path));
+        QTRY_COMPARE(backend.pictureSize(), QSize(80, 20));
+        QCOMPARE(backend.pictureSource().fragment(), QString("r1"));
+        backend.close();
+    }
+
+    void theTrashTakesAFileAndGivesItBack() {
+        // A home of its own on the same disk as the files, so the Trash used
+        // is a temporary one and never the desktop's.
+        QTemporaryDir home;
+        const QByteArray realHome = qgetenv("HOME"), realData = qgetenv("XDG_DATA_HOME");
+        qputenv("HOME", home.path().toUtf8());
+        qputenv("XDG_DATA_HOME", home.filePath("data").toUtf8());
+        QVERIFY(QDir(home.path()).mkpath("photos"));
+        // Qt makes the Trash only where ~/.local/share is, as it always is.
+        QVERIFY(QDir(home.path()).mkpath("data"));
+        QImage image(8, 8, QImage::Format_RGB32);
+        image.fill(Qt::green);
+        for (const char *name : {"a.png", "b.png", "c.png"})
+            QVERIFY(image.save(home.filePath(QString("photos/") + name)));
+        {
+            Backend::Options options;
+            options.positionsPath = home.filePath("positions.json");
+            options.audio = false;
+            options.previews = false;
+            Backend backend(options);
+            backend.open({home.filePath("photos/b.png")});
+            QTRY_COMPARE(backend.playlistCount(), 3);
+            QVERIFY(backend.trash());
+            QVERIFY(!QFile::exists(home.filePath("photos/b.png")));
+            QVERIFY(QFile::exists(home.filePath("data/Trash/files/b.png")));
+            QVERIFY(QFile::exists(home.filePath("data/Trash/info/b.png.trashinfo")));
+            QCOMPARE(backend.fileName(), QString("c.png"));
+            QCOMPARE(backend.playlistCount(), 2);
+            // Ctrl+Z puts it back, where it was, and shows it again.
+            QVERIFY(backend.undoTrash());
+            QVERIFY(QFile::exists(home.filePath("photos/b.png")));
+            QVERIFY(!QFile::exists(home.filePath("data/Trash/info/b.png.trashinfo")));
+            QCOMPARE(backend.fileName(), QString("b.png"));
+            QCOMPARE(backend.playlistIndex(), 1);
+            QVERIFY(!backend.undoTrash());
+            // The last file going leaves the window empty.
+            backend.open({home.filePath("photos/a.png"), home.filePath("photos/c.png")});
+            QVERIFY(backend.trash());
+            QVERIFY(backend.trash());
+            QVERIFY(!backend.hasMedia());
+            QVERIFY(!backend.trash());
+            backend.close();
+        }
+        qputenv("HOME", realHome);
+        if (realData.isEmpty())
+            qunsetenv("XDG_DATA_HOME");
+        else
+            qputenv("XDG_DATA_HOME", realData);
     }
 
     // Resume positions
@@ -538,11 +802,14 @@ private slots:
             options.previews = false;
             Backend backend(options);
             Mpris mpris(&backend, nullptr, bus);
+            // A window with nothing playing, or only pictures, isn't a player.
+            QVERIFY(!mpris.registered());
+            backend.open({m_picture});
+            QVERIFY(!mpris.registered());
+            backend.open({m_clip});
             QVERIFY(mpris.registered());
             QCOMPARE(mpris.service(),
                      QString("org.mpris.MediaPlayer2.omaview.instance%1").arg(QCoreApplication::applicationPid()));
-            QCOMPARE(mpris.playbackStatus(), QString("Stopped"));
-            backend.open({m_clip});
             QTRY_VERIFY_WITH_TIMEOUT(backend.playing(), 10000);
             QCOMPARE(mpris.playbackStatus(), QString("Playing"));
             QTRY_COMPARE(mpris.metadata().value("xesam:title").toString(), QString("clip.mkv"));

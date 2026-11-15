@@ -24,6 +24,12 @@ Item {
         scissors: "M6 6 A2.5 2.5 0 1 1 5.9 6 Z M6 18 A2.5 2.5 0 1 1 5.9 18 Z M8 7.5 L20 17 M8 16.5 L20 7",
         info: "M12 3 A9 9 0 1 1 11.9 3 Z M12 11 L12 17 M12 7.5 L12 7.6",
         open: "M3 6 L9 6 L11 8 L21 8 L21 19 L3 19 Z M12 11 L12 17 M9 14 L12 11 L15 14",
+        picture: "M3 5 L21 5 L21 19 L3 19 Z M3 16 L9 11 L13 15 L16 12 L21 16 M15.5 8.5 L15.6 8.5",
+        turn: "M20 11 A8 8 0 1 0 17.7 17.7 M20 4 L20 11 L13 11",
+        zoomIn: "M10.5 3 A7.5 7.5 0 1 1 10.4 3 Z M16 16 L21 21 M7.5 10.5 L13.5 10.5 M10.5 7.5 L10.5 13.5",
+        zoomOut: "M10.5 3 A7.5 7.5 0 1 1 10.4 3 Z M16 16 L21 21 M7.5 10.5 L13.5 10.5",
+        trash: "M4 7 L20 7 M9 7 L9 4 L15 4 L15 7 M6 7 L7 20 L17 20 L18 7 M10 11 L10 16 M14 11 L14 16",
+        edit: "M4 20 L4 16 L15 5 L19 9 L8 20 Z M13 7 L17 11",
         music: "M9 18 A3 3 0 1 1 8.9 18 Z M21 16 A3 3 0 1 1 20.9 16 Z M12 18 L12 5 L24 3 L24 16"
     })
     readonly property bool filled: ["play", "pause", "back", "fwd"].indexOf(name) >= 0

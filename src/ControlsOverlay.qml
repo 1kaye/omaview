@@ -3,12 +3,14 @@ import QtQuick.Layouts
 import "Format.js" as Format
 
 // What Tab brings in: the file across the top and the transport across the
-// bottom, over gradients so they read on any picture.
+// bottom, over gradients so they read on any picture. A picture's transport
+// steps, zooms and turns rather than plays.
 Item {
     id: overlay
     signal toggleFullscreen()
     property bool fullscreen: false
     property var keys
+    property Item picture
     // Narrow windows keep what matters most: play, the time, fullscreen.
     readonly property bool roomy: width >= 760
     readonly property bool medium: width >= 560
@@ -56,18 +58,18 @@ Item {
             Layout.fillWidth: true
         }
         ControlButton {
-            visible: backend.hasVideo && overlay.medium
+            visible: (backend.isPicture || backend.hasVideo) && overlay.medium
             icon: "copy"
-            text: qsTr("Copy frame")
-            keys: overlay.keys.copyFrame
-            onClicked: backend.copyFrame()
+            text: backend.isPicture ? qsTr("Copy picture") : qsTr("Copy frame")
+            keys: overlay.keys.copy
+            onClicked: backend.copy()
         }
         ControlButton {
-            visible: backend.canTrim && backend.hasVideo && overlay.roomy
-            icon: "scissors"
-            text: qsTr("Trim in Omacut")
-            keys: overlay.keys.trim
-            onClicked: backend.trimInOmacut()
+            visible: backend.canEdit && (backend.isPicture || backend.hasVideo) && overlay.roomy
+            icon: backend.isPicture ? "edit" : "scissors"
+            text: backend.isPicture ? qsTr("Edit in Omasnap") : qsTr("Trim in Omacut")
+            keys: overlay.keys.edit
+            onClicked: backend.edit()
         }
     }
 
@@ -79,11 +81,70 @@ Item {
         spacing: 12
 
         Timeline {
+            visible: !backend.isPicture
             expanded: true
             Layout.fillWidth: true
         }
 
         RowLayout {
+            visible: backend.isPicture
+            Layout.fillWidth: true
+            spacing: 6
+            ControlButton {
+                visible: backend.playlistCount > 1
+                icon: "prev"
+                onClicked: backend.previous()
+            }
+            Text {
+                visible: backend.playlistCount > 1
+                Layout.leftMargin: 4
+                Layout.rightMargin: 4
+                text: qsTr("%1 of %2").arg((backend.playlistIndex + 1).toLocaleString(Qt.locale(), 'f', 0))
+                                      .arg(backend.playlistCount.toLocaleString(Qt.locale(), 'f', 0))
+                color: "white"
+                font.pixelSize: 13
+            }
+            ControlButton {
+                visible: backend.playlistCount > 1
+                icon: "next"
+                onClicked: backend.next()
+            }
+            Item { Layout.fillWidth: true }
+            ControlButton {
+                icon: "zoomOut"
+                onClicked: overlay.picture.zoomBy(0.8)
+            }
+            // The scale, which goes back to fitting the window.
+            ControlButton {
+                text: overlay.picture && !overlay.picture.fitted
+                      ? Math.round(overlay.picture.ratio * 100).toLocaleString(Qt.locale(), 'f', 0) + "%" : qsTr("Fit")
+                keys: overlay.keys.fit
+                onClicked: overlay.picture.fitted ? overlay.picture.actualSize() : overlay.picture.reset()
+            }
+            ControlButton {
+                icon: "zoomIn"
+                onClicked: overlay.picture.zoomBy(1.25)
+            }
+            ControlButton {
+                visible: overlay.medium
+                icon: "turn"
+                keys: overlay.keys.turn
+                onClicked: backend.rotate(90)
+            }
+            ControlButton {
+                visible: overlay.medium
+                icon: "trash"
+                keys: overlay.keys.trash
+                onClicked: backend.trash()
+            }
+            ControlButton {
+                icon: overlay.fullscreen ? "unfull" : "full"
+                onClicked: overlay.toggleFullscreen()
+            }
+        }
+
+        RowLayout {
+            visible: !backend.isPicture
             Layout.fillWidth: true
             spacing: 6
             ControlButton {

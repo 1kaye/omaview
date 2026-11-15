@@ -10,6 +10,8 @@
 #include <cstdio>
 
 #include "frames.h"
+#include "picture.h"
+#include "playlist.h"
 #include "positions.h"
 #include "probe.h"
 
@@ -47,15 +49,53 @@ QString clock(double seconds) {
         .arg(fraction);
 }
 
+// A picture: its size, format and what the camera wrote.
+int pictureInfo(const QString &path, bool json) {
+    const picture::Info info = picture::read(path);
+    if (!info.ok())
+        return fail(info.error);
+    if (json) {
+        print(info.toJson());
+        return 0;
+    }
+    print(stdout, QFileInfo(path).fileName());
+    print(stdout, "  Format    " + info.format);
+    print(stdout, QString("  Size      %1x%2, %3 bytes").arg(info.size.width()).arg(info.size.height()).arg(info.bytes));
+    if (info.animated)
+        print(stdout, QString("  Frames    %1").arg(info.frames));
+    const exif::Tags &exif = info.exif;
+    if (exif.taken.isValid())
+        print(stdout, "  Taken     " + exif.taken.toString("yyyy-MM-dd HH:mm:ss"));
+    if (!exif.camera().isEmpty())
+        print(stdout, "  Camera    " + exif.camera());
+    if (!exif.lens.isEmpty())
+        print(stdout, "  Lens      " + exif.lens);
+    QStringList exposure;
+    if (exif.exposure > 0)
+        exposure << (exif.exposure >= 1 ? QString::number(exif.exposure) : QString("1/%1").arg(qRound(1 / exif.exposure))) + " s";
+    if (exif.aperture > 0)
+        exposure << "f/" + QString::number(exif.aperture);
+    if (exif.iso > 0)
+        exposure << "ISO " + QString::number(exif.iso);
+    if (exif.focalLength > 0)
+        exposure << QString::number(exif.focalLength) + " mm";
+    if (!exposure.isEmpty())
+        print(stdout, "  Exposure  " + exposure.join(", "));
+    return 0;
+}
+
 int info(const QStringList &arguments) {
-    Command command("info", "Duration, streams, chapters, and where Omaview would resume.");
-    command.parser.addPositionalArgument("file", "The video or music file.");
+    Command command("info", "What's in a file: a video's duration, streams, chapters and where Omaview would resume, "
+                            "or a picture's size, format and camera details.");
+    command.parser.addPositionalArgument("file", "The picture, video or music file.");
     command.parser.process(arguments);
     const QString path = command.argument(1);
     if (path.isEmpty())
         return fail("Usage: omaview info <file> [--json]");
     if (!QFileInfo(path).isFile())
         return fail("No such file: " + path);
+    if (playlist::picture(path))
+        return pictureInfo(path, command.parser.isSet(command.json));
     const probe::Info info = probe::run(QFileInfo(path).absoluteFilePath());
     if (!info.ok())
         return fail(info.error);
@@ -110,6 +150,8 @@ int frame(const QStringList &arguments) {
         return fail("Usage: omaview frame <file> --at <time> -o <out.png> [--json]");
     if (!QFileInfo(path).isFile())
         return fail("No such file: " + path);
+    if (playlist::picture(path))
+        return fail(path + " is a picture; frame takes a video.");
     const double seconds = parseTime(command.parser.value(at));
     if (seconds < 0)
         return fail("Not a time: " + command.parser.value(at));
@@ -189,10 +231,10 @@ double parseTime(const QString &text) {
 }
 
 QString cliSummary() {
-    return "Player:\n"
-           "  open [files or URLs...]        Play, in a window; several files are the playlist\n\n"
+    return "Viewer:\n"
+           "  open [files or URLs...]        Show or play, in a window; several files are the playlist\n\n"
            "Commands that need no display (omaview help <command> for options):\n"
-           "  info <file>                    Duration, streams, chapters, the resume position\n"
+           "  info <file>                    A video's streams and chapters, or a picture's size and camera\n"
            "  frame <file> --at T -o F.png   The exact frame at a time, as a PNG\n"
            "  skill [install]                Print the skill for coding agents, or install it";
 }

@@ -72,6 +72,22 @@ class CommandLineTests(unittest.TestCase):
         with open(out, "rb") as png:
             self.assertEqual(png.read(8), b"\x89PNG\r\n\x1a\n")
 
+    def test_info_of_a_picture(self):
+        picture = os.path.join(self.home, "still.png")
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=64x48", "-frames:v", "1",
+                        picture], check=True)
+        result = run("info", picture, "--json", home=self.home)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        info = json.loads(result.stdout)
+        self.assertEqual((info["type"], info["format"], info["width"], info["height"]), ("picture", "PNG", 64, 48))
+        self.assertFalse(info["animated"])
+        result = run("info", picture, home=self.home)
+        self.assertIn("Size      64x48", result.stdout)
+        # A picture has no frames to take.
+        result = run("frame", picture, "-o", os.path.join(self.home, "x.png"), home=self.home)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("is a picture", result.stderr)
+
     def test_errors_go_to_stderr_in_english(self):
         result = run("info", os.path.join(self.home, "missing.mkv"), home=self.home)
         self.assertEqual(result.returncode, 1)
