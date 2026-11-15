@@ -182,7 +182,7 @@ QString previewCachePath(const QString &videoPath) {
     return key.isEmpty() ? QString() : previewCacheDirectory() + "/" + key + ".jpg";
 }
 
-QImage poster(const QString &path) {
+QImage poster(const QString &path, const std::atomic_bool *cancelled) {
     const QString key = Positions::key(path);
     const QString cache = key.isEmpty() ? QString() : previewCacheDirectory() + "/" + key + ".poster.jpg";
     if (!cache.isEmpty()) {
@@ -195,13 +195,15 @@ QImage poster(const QString &path) {
     for (const QString &at : {QStringLiteral("3"), QStringLiteral("0")}) {
         const QByteArray png = ffmpeg({"-ss", at, "-i", path, "-map", "0:V:0", "-frames:v", "1", "-vf", "scale=640:-2",
                                        "-f", "image2pipe", "-c:v", "png", "-"},
-                                      20000, nullptr, true);
+                                      20000, nullptr, true, cancelled);
         image = QImage::fromData(png, "PNG");
-        if (!image.isNull())
+        if (!image.isNull() || (cancelled && *cancelled))
             break;
     }
-    if (!image.isNull() && !cache.isEmpty() && QDir().mkpath(previewCacheDirectory()))
+    if (!image.isNull() && !cache.isEmpty() && QDir().mkpath(previewCacheDirectory())) {
         image.save(cache, "JPG", 85);
+        prunePreviewCache(previewCacheDirectory(), previewCacheLimit);
+    }
     return image;
 }
 
@@ -228,7 +230,7 @@ std::shared_ptr<QMutex> filmstripLock(const QString &path) {
 
 }  // namespace
 
-QImage makeFilmstrip(const QString &path) {
+QImage makeFilmstrip(const QString &path, const std::atomic_bool *cancelled) {
     const QString cache = filmstripPath(path);
     if (cache.isEmpty())
         return {};
@@ -237,7 +239,7 @@ QImage makeFilmstrip(const QString &path) {
     QImage strip(cache);
     if (!strip.isNull())
         return strip;
-    const double duration = probe::run(path, 5000).duration;
+    const double duration = probe::run(path, 5000, cancelled).duration;
     if (duration <= 0)
         return {};
     // The ten seeks run side by side. In a long video each takes the
@@ -252,7 +254,7 @@ QImage makeFilmstrip(const QString &path) {
             arguments << "-skip_frame" << "nokey" << "-noaccurate_seek";
         arguments << "-ss" << seconds(duration * (i + 0.5) / filmstripFrames) << "-i" << path << "-map" << "0:V:0"
                   << "-frames:v" << "1" << "-vf" << "scale=320:-2" << "-f" << "image2pipe" << "-c:v" << "png" << "-";
-        return QImage::fromData(ffmpeg(arguments, 20000, nullptr, true), "PNG");
+        return QImage::fromData(ffmpeg(arguments, 20000, nullptr, true, cancelled), "PNG");
     });
     if (std::any_of(shots.begin(), shots.end(), [](const QImage &shot) { return shot.isNull(); }))
         return {};
@@ -263,15 +265,17 @@ QImage makeFilmstrip(const QString &path) {
     for (int i = 0; i < filmstripFrames; ++i)
         painter.drawImage(QRect(QPoint(i * size.width(), 0), size), shots[i]);
     painter.end();
-    if (QDir().mkpath(previewCacheDirectory()))
+    if (QDir().mkpath(previewCacheDirectory())) {
         strip.save(cache, "JPG", 85);
+        prunePreviewCache(previewCacheDirectory(), previewCacheLimit);
+    }
     return strip;
 }
 
-QImage filmstripFrame(const QString &path, int n) {
+QImage filmstripFrame(const QString &path, int n, const std::atomic_bool *cancelled) {
     if (n < 0 || n >= filmstripFrames)
         return {};
-    const QImage strip = makeFilmstrip(path);
+    const QImage strip = makeFilmstrip(path, cancelled);
     if (strip.isNull())
         return {};
     const int width = strip.width() / filmstripFrames;
@@ -365,7 +369,7 @@ void Previews::start(const QString &path, double duration, QSize videoSize) {
         out.setDirectWriteFallback(false);
         if (!out.open(QIODevice::WriteOnly) || !atlas.save(&out, "JPG", 80) || !out.commit())
             return;
-        prunePreviewCache(previewCacheDirectory(), 256LL * 1024 * 1024);
+        prunePreviewCache(previewCacheDirectory(), previewCacheLimit);
         QMetaObject::invokeMethod(
             qApp,
             [self, generation, cachePath, layout] {

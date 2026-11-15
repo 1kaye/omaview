@@ -239,6 +239,9 @@ signals:
     void volumeChanged();
     // A folder was opened: the window shows it as the grid.
     void folderOpened();
+    // Nothing given could be opened, as an empty folder: the window stops
+    // waiting for a file.
+    void nothingToOpen();
     void loopingChanged();
     void rateChanged();
     void errorChanged();

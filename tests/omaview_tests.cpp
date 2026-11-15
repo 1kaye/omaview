@@ -427,6 +427,29 @@ private slots:
         QVERIFY(!picture::read(dir.filePath("broken.png")).ok());
     }
 
+    void aFolderWaitsOnlyOnItsFirstFile() {
+        // A folder opening on a picture: the video picked after it plays.
+        QTemporaryDir state, folder;
+        QVERIFY(QFile::copy(m_picture, folder.filePath("a.jpg")));
+        QVERIFY(QFile::copy(m_clip, folder.filePath("b.mkv")));
+        Backend::Options options;
+        options.positionsPath = state.filePath("positions.json");
+        options.audio = false;
+        options.previews = false;
+        Backend backend(options);
+        QSignalSpy opened(&backend, &Backend::folderOpened);
+        backend.open({folder.path()});
+        QCOMPARE(opened.count(), 1);
+        QVERIFY(backend.isPicture());
+        QVERIFY(backend.go(1));
+        QTRY_VERIFY_WITH_TIMEOUT(backend.playing(), 10000);
+        // An empty folder opens nothing, and says so.
+        QTemporaryDir empty;
+        QSignalSpy nothing(&backend, &Backend::nothingToOpen);
+        backend.open({empty.path()});
+        QCOMPARE(nothing.count(), 1);
+    }
+
     void aPictureNeverStartsThePlayer() {
         QTemporaryDir state;
         Backend::Options options;

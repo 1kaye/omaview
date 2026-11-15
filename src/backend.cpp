@@ -399,8 +399,10 @@ void Backend::open(const QStringList &arguments) {
             items << file.absoluteFilePath();
         }
     }
-    if (items.isEmpty())
+    if (items.isEmpty()) {
+        emit nothingToOpen();
         return;
+    }
     rememberPosition();
     m_playlist = items;
     m_index = -1;
@@ -504,6 +506,9 @@ void Backend::load(int index) {
     if (index < 0 || index >= m_playlist.size())
         return;
     m_index = index;
+    // Only the file a folder opens on waits; whatever loads first, picture
+    // or video, uses the hold up.
+    const bool hold = std::exchange(m_holdPlayback, false);
     const QString item = m_playlist.at(index);
     if (playlist::picture(item)) {
         loadPicture(item);
@@ -552,11 +557,10 @@ void Backend::load(int index) {
     emitFileChanged();
     // A folder opens on its grid, so its first video waits, paused, until
     // it's picked.
-    if (m_holdPlayback)
+    if (hold)
         m_player->pause();
     else
         m_player->play();
-    m_holdPlayback = false;
 }
 
 // A picture never starts the player: one already playing a video stops and

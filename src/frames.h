@@ -33,18 +33,20 @@ struct PreviewLayout {
 // A frame a few seconds in, 640 wide, for the grid's tile; cached beside
 // the previews by the file's path, size and time. Runs ffmpeg
 // synchronously, so call it off the GUI thread.
-QImage poster(const QString &path);
+QImage poster(const QString &path, const std::atomic_bool *cancelled = nullptr);
 
 // The grid's preview: frame n of filmstripFrames, spread evenly over the
 // video, 320 wide. The whole strip is made on the first ask and cached as
 // one image beside the previews. Synchronous, so off the GUI thread.
 constexpr int filmstripFrames = 10;
-QImage filmstripFrame(const QString &path, int n);
+QImage filmstripFrame(const QString &path, int n, const std::atomic_bool *cancelled = nullptr);
 // The whole strip, made if it isn't cached yet; the grid starts it for each
 // video as its tile shows, so it is ready by the time it is picked.
-QImage makeFilmstrip(const QString &path);
+QImage makeFilmstrip(const QString &path, const std::atomic_bool *cancelled = nullptr);
 
 QString previewCacheDirectory();
+// The previews, posters and strips together stay under this.
+constexpr qint64 previewCacheLimit = 256LL * 1024 * 1024;
 // The cached atlas for a file, if its path, size and time still match.
 QString previewCachePath(const QString &videoPath);
 // Keeps the cache under a size, removing the least recently used first.

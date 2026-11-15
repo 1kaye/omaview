@@ -38,8 +38,8 @@ QImage picture(const QString &path, const QSize &requested) {
 
 class Response : public QQuickImageResponse, public QRunnable {
 public:
-    Response(const QString &path, const QSize &requested, int frame)
-        : m_path(path), m_requested(requested), m_frame(frame) {
+    Response(const QString &path, const QSize &requested, int frame, std::shared_ptr<std::atomic_bool> stopping)
+        : m_path(path), m_requested(requested), m_frame(frame), m_stopping(std::move(stopping)) {
         setAutoDelete(false);
     }
     QQuickTextureFactory *textureFactory() const override {
@@ -47,7 +47,7 @@ public:
     }
     void run() override {
         if (m_frame >= 0) {
-            m_image = frames::filmstripFrame(m_path, m_frame);
+            m_image = frames::filmstripFrame(m_path, m_frame, m_stopping.get());
             emit finished();
             return;
         }
@@ -56,10 +56,10 @@ public:
             m_image = picture(m_path, m_requested);
             break;
         case playlist::Kind::Video:
-            m_image = frames::poster(m_path);
+            m_image = frames::poster(m_path, m_stopping.get());
             // Its preview frames are made behind it, a couple of videos at
             // a time, so they are there when it's picked.
-            filmstrips().start([path = m_path] { frames::makeFilmstrip(path); });
+            filmstrips().start([path = m_path, stopping = m_stopping] { frames::makeFilmstrip(path, stopping.get()); });
             break;
         default:
             break;
@@ -71,6 +71,7 @@ private:
     QString m_path;
     QSize m_requested;
     int m_frame = -1;
+    std::shared_ptr<std::atomic_bool> m_stopping;
     QImage m_image;
 };
 
@@ -81,8 +82,11 @@ ThumbnailProvider::ThumbnailProvider() {
 }
 
 ThumbnailProvider::~ThumbnailProvider() {
-    // Strips not started yet are dropped; one being made finishes first.
+    // What hasn't started is dropped, and the ffmpegs running are stopped.
+    m_pool.clear();
     filmstrips().clear();
+    *m_stopping = true;
+    m_pool.waitForDone();
     filmstrips().waitForDone();
 }
 
@@ -93,7 +97,7 @@ QQuickImageResponse *ThumbnailProvider::requestImageResponse(const QString &id, 
         frame = id.section('/', 1, 1).toInt();
         path = id.section('/', 2);
     }
-    auto *response = new Response(QUrl::fromPercentEncoding(path.toUtf8()), requestedSize, frame);
+    auto *response = new Response(QUrl::fromPercentEncoding(path.toUtf8()), requestedSize, frame, m_stopping);
     m_pool.start(response);
     return response;
 }

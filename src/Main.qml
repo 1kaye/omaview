@@ -184,6 +184,7 @@ ApplicationWindow {
                 videoLoader.item.clearOutput()
         }
         function onFolderOpened() { win.gridShown = true }
+        function onNothingToOpen() { win.opening = false }
         function onErrorChanged() {
             if (backend.error !== "")
                 win.holding = false
