@@ -7,7 +7,6 @@ import "Format.js" as Format
 Item {
     id: timeline
     property bool expanded: false
-    property bool hovering: hover.hovered
     readonly property bool usable: backend.seekable && backend.duration > 0
     readonly property real fraction: backend.duration > 0 ? Math.min(1, backend.position / backend.duration) : 0
     property real dragFraction: -1

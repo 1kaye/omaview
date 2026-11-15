@@ -31,7 +31,6 @@ public:
     // time, hashed, so the file holds no names and an edited file starts over.
     static QString key(const QString &file);
 
-    QString path() const { return m_path; }
 
 private:
     QJsonObject read() const;

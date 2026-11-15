@@ -22,7 +22,6 @@ struct Stream {
     double frameRate = 0;
     int channels = 0;
     QString channelLayout;
-    qint64 bitRate = 0;
     bool isDefault = false;
     bool attachedPicture = false;  // cover art, which ffprobe lists as video
 

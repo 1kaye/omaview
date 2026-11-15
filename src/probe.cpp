@@ -96,7 +96,6 @@ Info parse(const QByteArray &json, const QString &path) {
             stream.frameRate = rate(object.value("r_frame_rate").toString());
         stream.channels = object.value("channels").toInt();
         stream.channelLayout = object.value("channel_layout").toString();
-        stream.bitRate = object.value("bit_rate").toString().toLongLong();
         const QJsonObject disposition = object.value("disposition").toObject();
         stream.isDefault = disposition.value("default").toInt() != 0;
         stream.attachedPicture = disposition.value("attached_pic").toInt() != 0;
