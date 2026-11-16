@@ -37,7 +37,7 @@ int main(int argc, char *argv[]) {
 
     QGuiApplication app(argc, argv);
     app.setApplicationName("omaview");
-    app.setApplicationVersion("0.1.0");
+    app.setApplicationVersion("0.1.1");
 
     if (command)
         return runCli(app.arguments());
