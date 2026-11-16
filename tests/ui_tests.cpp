@@ -365,6 +365,9 @@ private slots:
         // until a tile is picked.
         w->backend->open({QFileInfo(m_clip).absolutePath()});
         QTRY_VERIFY(w->window->property("gridShown").toBool());
+        // At the size of its tiles: as many 240px ones across as fit in 80% of
+        // the 800px test screen, two, and as tall as its two files' one row.
+        QTRY_COMPARE(w->window->size(), QSize(8 + 2 * 248, 16 + 188));
         QTRY_VERIFY_WITH_TIMEOUT(w->backend->playerReady(), 10000);
         QTest::qWait(1000);
         QVERIFY(!w->backend->playing());
@@ -614,6 +617,22 @@ private slots:
                  QString("Previous or next file"));
         shot(w.get(), "12-picture-keys");
         QVERIFY2(w->warnings.isEmpty(), qPrintable(w->warnings.join('\n')));
+        close(w);
+    }
+
+    void aFolderOfOneFitsItsTile() {
+        const QString lone = m_dir.filePath("one");
+        QVERIFY(QDir().mkpath(lone));
+        QVERIFY(QProcess::execute("ffmpeg", {"-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=640x480",
+                                             "-frames:v", "1", lone + "/only.png"}) == 0);
+        auto w = open(m_dir.filePath("one-state"));
+        QVERIFY(w->window);
+        QVERIFY(QTest::qWaitForWindowExposed(w->window));
+        w->backend->open({lone});
+        QTRY_VERIFY(w->window->property("gridShown").toBool());
+        // Held to the window's least width, the tile stretches to 304 across,
+        // and the window is as tall as it then is.
+        QTRY_COMPARE(w->window->size(), QSize(320, 16 + 228 + 8));
         close(w);
     }
 

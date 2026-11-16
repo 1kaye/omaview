@@ -85,8 +85,10 @@ int main(int argc, char *argv[]) {
     // A local video or song is measured first too, so the window opens at
     // its shape rather than at a default and then changing.
     const QUrl firstUrl = files.isEmpty() ? QUrl() : QUrl::fromUserInput(files.first(), QDir::currentPath(), QUrl::AssumeLocalFile);
-    const bool measure = !picture && firstUrl.isLocalFile() && !QFileInfo(firstUrl.toLocalFile()).isDir();
-    engine.setInitialProperties({{"opening", !files.isEmpty()}, {"holding", picture || measure}});
+    const bool folder = firstUrl.isLocalFile() && QFileInfo(firstUrl.toLocalFile()).isDir();
+    const bool measure = !picture && !folder && firstUrl.isLocalFile();
+    // A folder opens on its grid, at the size of its tiles, once it's listed.
+    engine.setInitialProperties({{"opening", !files.isEmpty()}, {"holding", picture || measure || folder}});
     engine.addImageProvider("thumbnail", new ThumbnailProvider);
     engine.load(QUrl("qrc:/Main.qml"));
     if (engine.rootObjects().isEmpty())
@@ -108,8 +110,9 @@ int main(int argc, char *argv[]) {
     QObject::connect(&app, &QCoreApplication::aboutToQuit, &backend, &Backend::close);
 
     // A video or a song opens once the window has drawn, since starting the
-    // player probes the GPU's decoders on this thread.
-    if (picture) {
+    // player probes the GPU's decoders on this thread. A picture, and a
+    // folder, which is listed before its grid shows, open while it's hidden.
+    if (picture || folder) {
         // Work in the background lets the app quit when it finishes with no
         // window showing, so the hidden window holds it until it shows.
         auto *hold = new QEventLoopLocker;

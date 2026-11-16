@@ -140,9 +140,28 @@ ApplicationWindow {
     // by a tiling compositor or by a hand resizing it, keeps that: asked to
     // change, a tiled one would shrink and then snap back.
     property size asked: Qt.size(960, 540)
-    readonly property bool managed: visible && (Math.abs(width - asked.width) > 2 || Math.abs(height - asked.height) > 2)
+    readonly property bool managed: visible && !reshaping
+                                    && (Math.abs(width - asked.width) > 2 || Math.abs(height - asked.height) > 2)
+    // A window on screen is reshaped by the compositor, which Hyprland has to
+    // do itself. Until the new size comes, the last picture stays, and a
+    // video draws nothing, rather than the next file in the last one's shape.
+    property bool reshaping: false
+    readonly property bool reshaped: Math.abs(width - asked.width) <= 2 && Math.abs(height - asked.height) <= 2
+    onReshapedChanged: if (reshaped) reshaping = false
+    Timer {
+        id: reshapeTimer
+        interval: 400
+        onTriggered: win.reshaping = false
+    }
     function ask(w, h) {
+        if (Math.abs(width - w) <= 2 && Math.abs(height - h) <= 2)
+            return
         asked = Qt.size(w, h)
+        if (visible && backend.reshapeWindow(asked)) {
+            reshaping = true
+            reshapeTimer.restart()
+            return
+        }
         width = w
         height = h
     }
@@ -162,13 +181,27 @@ ApplicationWindow {
         if ((sized && !backend.isPicture) || fullscreen || gridShown || !backend.hasMedia || backend.error !== "")
             return
         if (backend.isPicture) {
-            if (pictureView.ready)
+            // Once it's decoded, out of sight, so the picture shows in the
+            // same frame as the window takes its shape; its header says what
+            // that shape is.
+            if (!nextPictureDecoded())
+                return
+            const size = backend.pictureSize, turned = backend.rotation % 180 !== 0
+            if (size.width > 0 && size.height > 0)
+                sizeTo(turned ? size.height : size.width, turned ? size.width : size.height)
+            else if (pictureView.ready)
                 sizeTo(pictureView.turnedWidth, pictureView.turnedHeight)
         } else if (backend.hasVideo && backend.videoSize.width > 0) {
             sizeTo(backend.videoSize.width, backend.videoSize.height)
         } else if (!backend.hasVideo && !backend.loading && backend.duration > 0) {
             sizeSquare()
         }
+    }
+    function nextPictureDecoded() {
+        return backend.vector || backend.animated
+            || (backend.pictureSource.toString() !== ""
+                && nextPicture.source.toString() === backend.pictureSource.toString()
+                && (nextPicture.status === Image.Ready || nextPicture.status === Image.Error))
     }
     function sizeSquare() {
         sized = true
@@ -177,6 +210,27 @@ ApplicationWindow {
         const side = Math.max(minimumHeight, Math.min(520, Screen.desktopAvailableHeight * 0.6))
         ask(side, side)
     }
+    // A folder's grid opens as wide as its tiles, up to as many as fit across
+    // 80% of the screen, and as tall as its rows, in whole rows, up to 80% of
+    // its height, so a small folder's is just its tiles. The tiles are laid
+    // out as MediaGrid lays them: 4:3, with a gap around each.
+    function sizeGrid() {
+        if (fullscreen || managed)
+            return
+        const gap = 8, tile = gridTileSize
+        const maxWidth = Screen.desktopAvailableWidth * 0.8, maxHeight = Screen.desktopAvailableHeight * 0.8
+        const fit = Math.max(1, Math.floor((maxWidth - gap) / (tile + gap)))
+        const columns = Math.min(fit, Math.max(1, backend.playlistCount))
+        const wide = Math.max(minimumWidth, gap + columns * (tile + gap))
+        // A window held wider than its tiles stretches them, as MediaGrid
+        // does, so the rows are measured at the width they'll have.
+        const across = wide - gap, laid = Math.max(1, Math.floor(across / (tile + gap)))
+        const row = Math.round((Math.floor(across / laid) - gap) * 3 / 4) + gap
+        const rows = Math.min(Math.max(1, Math.floor((maxHeight - 2 * gap) / row)),
+                              Math.max(1, Math.ceil(backend.playlistCount / laid)))
+        ask(wide, Math.max(minimumHeight, 2 * gap + rows * row))
+    }
+
     // Started with a video or a song, measured before the window shows.
     function openAt(naturalWidth, naturalHeight, song) {
         if (naturalWidth > 0 && naturalHeight > 0)
@@ -202,9 +256,16 @@ ApplicationWindow {
             if (videoLoader.item)
                 videoLoader.item.clearOutput()
         }
-        function onFolderOpened() { win.gridShown = true }
+        function onFolderOpened() {
+            win.gridShown = true
+            win.sizeGrid()
+            win.holding = false
+        }
         function onNotice(text) { win.showMessage(text) }
-        function onNothingToOpen() { win.opening = false }
+        function onNothingToOpen() {
+            win.opening = false
+            win.holding = false
+        }
         function onErrorChanged() {
             if (backend.error !== "")
                 win.holding = false
@@ -387,7 +448,7 @@ ApplicationWindow {
         Loader {
             id: videoLoader
             anchors.fill: parent
-            visible: !backend.isPicture
+            visible: !backend.isPicture && !win.reshaping
             active: backend.playerReady
             sourceComponent: VideoOutput {
                 objectName: "video"
@@ -423,15 +484,45 @@ ApplicationWindow {
             }
             onFailed: backend.pictureFailed()
         }
-        // The last picture stays until the next one's header has been read,
-        // so stepping through a folder never flashes black; a video between
-        // them lets it go, so it can't show for a moment after.
-        Binding {
-            target: pictureView
-            property: "source"
-            value: backend.pictureSource
-            when: !win.picture || backend.pictureSource.toString() !== ""
-            restoreMode: Binding.RestoreNone
+        // The next picture decodes out of sight, as the window takes its
+        // shape, and the view takes it from Qt's cache once both are done:
+        // the last picture stays until then, so stepping through a folder
+        // never flashes black, nor shows a picture in the last one's shape.
+        // A video between them lets it go, so it can't show for a moment after.
+        Image {
+            id: nextPicture
+            visible: false
+            asynchronous: true
+            autoTransform: true
+            source: win.picture && !backend.vector && !backend.animated ? backend.pictureSource : ""
+        }
+        function showPicture() {
+            if (!win.picture) {
+                pictureView.source = ""
+                return
+            }
+            // The window is asked for the picture's shape first.
+            win.sizeToMedia()
+            const source = backend.pictureSource
+            if (source.toString() === "" || win.reshaping)
+                return
+            if (!win.nextPictureDecoded())
+                return
+            pictureView.source = source
+        }
+        Connections {
+            target: nextPicture
+            function onStatusChanged() { root.showPicture() }
+            function onSourceChanged() { root.showPicture() }
+        }
+        Connections {
+            target: win
+            function onReshapingChanged() { root.showPicture() }
+            function onPictureChanged() { root.showPicture() }
+        }
+        Connections {
+            target: backend
+            function onPictureChanged() { root.showPicture() }
         }
 
         // A song: its cover and its name.
