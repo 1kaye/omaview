@@ -355,6 +355,16 @@ private slots:
         QCOMPARE(names, (QStringList{"cover.jpg", "Episode 1.mp4", "episode 2.mkv", "Episode 10.mkv", "song.flac"}));
         QCOMPARE(playlist::kind("a.FLAC"), playlist::Kind::Audio);
         QCOMPARE(playlist::kind("a.txt"), playlist::Kind::None);
+        QCOMPARE(playlist::kind("/dir.jpg/noext"), playlist::Kind::None);
+        QCOMPARE(playlist::kind("/dir/file."), playlist::Kind::None);
+        // Natural, case-insensitive order holds under the C locale too.
+        const QLocale savedLocale;
+        QLocale::setDefault(QLocale::c());
+        QStringList cNames;
+        for (const QString &path : playlist::siblings(dir.filePath("episode 2.mkv")))
+            cNames << QFileInfo(path).fileName();
+        QLocale::setDefault(savedLocale);
+        QCOMPARE(cNames, (QStringList{"cover.jpg", "Episode 1.mp4", "episode 2.mkv", "Episode 10.mkv", "song.flac"}));
     }
 
     void songsAndPicturesDontMix() {
