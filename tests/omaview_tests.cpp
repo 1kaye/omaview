@@ -785,6 +785,52 @@ private slots:
         english.close();
     }
 
+    void subtitleDelayShiftsCues() {
+        QTemporaryDir state;
+        Backend::Options options;
+        options.positionsPath = state.filePath("positions.json");
+        options.audio = false;
+        options.previews = false;
+        Backend backend(options);
+        backend.setLanguage("en");
+        backend.open({m_clip});
+        QTRY_VERIFY_WITH_TIMEOUT(backend.subtitleChoices() == 2 && backend.seekable(), 10000);
+        backend.pause();
+
+        // With subtitles off, delay adjustments do nothing.
+        QCOMPARE(backend.subtitleLabel(), QString());
+        backend.changeSubtitleDelay(-100);
+        QCOMPARE(backend.subtitleDelay(), qint64(0));
+
+        // Turn on English subtitles (00:00:00,500 --> 00:00:04,000: "Hello there.").
+        backend.cycleSubtitles();
+        QCOMPARE(backend.subtitleLabel(), probe::languageName("en"));
+        backend.seek(1000);
+        QTRY_COMPARE_WITH_TIMEOUT(backend.subtitleText(), QString("Hello there."), 8000);
+
+        // Just before the cue starts: negative delay pulls it earlier, positive pushes it later.
+        backend.seek(450);
+        QCOMPARE(backend.subtitleText(), QString());
+        backend.changeSubtitleDelay(-100);
+        QCOMPARE(backend.subtitleDelay(), qint64(-100));
+        QCOMPARE(backend.subtitleText(), QString("Hello there."));
+        backend.changeSubtitleDelay(200);
+        QCOMPARE(backend.subtitleDelay(), qint64(100));
+        QCOMPARE(backend.subtitleText(), QString());
+        backend.seek(4050);
+        QCOMPARE(backend.subtitleText(), QString("Hello there."));
+
+        // Resetting or switching subtitle tracks clears the delay.
+        backend.resetSubtitleDelay();
+        QCOMPARE(backend.subtitleDelay(), qint64(0));
+        QCOMPARE(backend.subtitleText(), QString());
+        backend.changeSubtitleDelay(200);
+        QCOMPARE(backend.subtitleDelay(), qint64(200));
+        backend.cycleSubtitles();
+        QCOMPARE(backend.subtitleDelay(), qint64(0));
+        backend.close();
+    }
+
     void resumesWhereItWasLeft() {
         QTemporaryDir state;
         // Six minutes, at a frame a second, so it is quick to make.
