@@ -182,7 +182,7 @@ public:
     // Plays the file over and over, and every file after it, until turned off.
     Q_INVOKABLE void toggleLoop();
     Q_INVOKABLE void cycleSubtitles();
-    Q_INVOKABLE void changeSubtitleDelay(qint64 deltaMs);
+    Q_INVOKABLE bool changeSubtitleDelay(qint64 deltaMs);
     Q_INVOKABLE void resetSubtitleDelay();
     Q_INVOKABLE void cycleAudio();
     Q_INVOKABLE bool next();

@@ -388,12 +388,12 @@ ApplicationWindow {
     Shortcut {
         sequence: "Z"
         enabled: win.playable && backend.subtitleLabel !== ""
-        onActivated: { backend.changeSubtitleDelay(-100); win.showLevel("subtitleDelay") }
+        onActivated: if (backend.changeSubtitleDelay(-100)) win.showLevel("subtitleDelay")
     }
     Shortcut {
         sequence: "X"
         enabled: win.playable && backend.subtitleLabel !== ""
-        onActivated: { backend.changeSubtitleDelay(100); win.showLevel("subtitleDelay") }
+        onActivated: if (backend.changeSubtitleDelay(100)) win.showLevel("subtitleDelay")
     }
     Shortcut {
         sequence: "A"

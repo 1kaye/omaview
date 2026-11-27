@@ -1394,17 +1394,25 @@ void Backend::cycleSubtitles() {
     applySubtitle(next, true);
 }
 
-void Backend::changeSubtitleDelay(qint64 deltaMs) {
-    if (m_subtitleChoice < 0)
-        return;
+bool Backend::changeSubtitleDelay(qint64 deltaMs) {
+    if (m_subtitleChoice < 0 || m_subtitleChoice >= m_subtitleChoices.size())
+        return false;
+    const SubtitleChoice &choice = m_subtitleChoices.at(m_subtitleChoice);
+    if (!choice.cuesLoaded) {
+        emit notice(choice.cuesLoading ? tr("Subtitles are still loading.")
+                                       : tr("Subtitle timing can't be adjusted for this track."));
+        return false;
+    }
     constexpr qint64 limit = 60 * 60 * 1000;
     m_subtitleDelay = std::clamp(m_subtitleDelay + std::clamp(deltaMs, -limit, limit), -limit, limit);
     updateSubtitleText();
     emit subtitleDelayChanged();
+    return true;
 }
 
 void Backend::resetSubtitleDelay() {
-    if (m_subtitleChoice < 0)
+    if (m_subtitleChoice < 0 || m_subtitleChoice >= m_subtitleChoices.size()
+        || !m_subtitleChoices.at(m_subtitleChoice).cuesLoaded)
         return;
     m_subtitleDelay = 0;
     updateSubtitleText();
